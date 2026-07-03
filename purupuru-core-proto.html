@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ぷるぷる物理コア 検証機 v0.3</title>
+<title>ぷるぷる物理コア 検証機 v0.5</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
 <style>
@@ -147,7 +147,7 @@
 </head>
 <body>
 <div class="win">
-  <div class="titlebar">ぷるぷる物理コア 検証機<span class="ver">core v0.3</span><span class="wbtn">_</span><span class="wbtn">□</span><span class="wbtn">×</span></div>
+  <div class="titlebar">ぷるぷる物理コア 検証機<span class="ver">core v0.5</span><span class="wbtn">_</span><span class="wbtn">□</span><span class="wbtn">×</span></div>
   <div class="body">
     <div class="stage"><canvas id="gl"></canvas></div>
     <div class="hint" id="hint">▶ ドラッグでつまんで弾く。青い部分がやわらかい領域。</div>
@@ -165,7 +165,8 @@
         <button id="bAILoad">AIを準備する（初回のみ・数MB）</button>
         <button id="bAIAdd" hidden>追加モード: OFF</button>
       </div>
-      <div class="small">準備が終わると「AI選択」モードが使えます。画像の揺らしたい物をタップすると、その部分だけが自動でやわらかくなります。解析も端末内で完結し、画像は送信されません。</div>
+      <div class="row"><label class="sl">ひろがり</label><input type="range" id="aiTh" min="0" max="1" step="0.01" value="1"></div>
+      <div class="small">タップで自動選択。<b>なぞる</b>と、なぞった部分を狙って選択します。「ひろがり」を狭めると、なぞった周辺だけが揺れるようになります（胸だけ・髪だけ等）。解析は端末内で完結し、画像は送信されません。</div>
     </details>
 
     <details class="group" open id="gTune">
@@ -482,7 +483,7 @@ canvas.addEventListener("pointerdown", e => {
       }
     }
   } else if(mode === "ai"){
-    aiPick(x, y);
+    aiPts = [[x, y]];
   } else {
     paint(x, y);
   }
@@ -499,13 +500,19 @@ canvas.addEventListener("pointermove", e => {
     const now = performance.now(), pdt = Math.max(1, now - lastPT) / 1000;
     grabVX = (x - lastPX) / pdt; grabVY = (y - lastPY) / pdt;
     lastPX = x; lastPY = y; lastPT = now;
+  } else if(mode === "ai" && aiPts){
+    const last = aiPts[aiPts.length - 1];
+    if(Math.hypot(x - last[0], y - last[1]) > Math.min(W, H) * 0.02) aiPts.push([x, y]);
   } else if(mode === "soft" || mode === "hard"){
     paint(x, y);
   }
 });
-function release(){ grabbing = false; grabInfl = null; }
+function release(){
+  if(mode === "ai" && aiPts){ const p = aiPts; aiPts = null; aiPick(p); }
+  grabbing = false; grabInfl = null;
+}
 canvas.addEventListener("pointerup", release);
-canvas.addEventListener("pointercancel", release);
+canvas.addEventListener("pointercancel", () => { aiPts = null; grabbing = false; grabInfl = null; });
 
 function paint(x, y){
   const R = sl("brush") * Math.min(W, H);
@@ -533,7 +540,7 @@ function setMode(m){
   canvas.classList.toggle("painting", m === "soft" || m === "hard");
   document.getElementById("hint").textContent =
     m === "poke" ? "▶ ドラッグでつまんで弾く。青い部分がやわらかい領域。"
-    : m === "ai" ? "▶ 揺らしたい物をタップすると自動で選択される。"
+    : m === "ai" ? "▶ タップまたはなぞって選択。なぞると部位を狙える。"
     : m === "soft" ? "▶ なぞった部分がやわらかくなる（揺れるようになる）。"
     : "▶ なぞった部分がかたくなる（固定される）。";
 }
@@ -634,36 +641,85 @@ function smoothstepf(a, b, x){
   x = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return x * x * (3 - 2 * x);
 }
-function aiPick(px, py){
+let aiPts = null;
+function aiPick(pts){
   if(!segmenter || !srcCanvas || aiBusy) return;
   aiBusy = true;
   hintEl.textContent = "▶ 解析中…";
+  const roi = pts.length >= 4
+    ? { scribble: pts.map(p => ({ x: p[0] / W, y: p[1] / H })) }
+    : { keypoint: { x: pts[0][0] / W, y: pts[0][1] / H } };
   try{
-    segmenter.segment(srcCanvas, { keypoint: { x: px / W, y: py / H } }, res => {
+    segmenter.segment(srcCanvas, roi, res => {
       const cm = res.confidenceMasks && res.confidenceMasks[0];
       if(!cm){ hintEl.textContent = "▶ 選択できなかった…筆モードで塗ってください。"; aiBusy = false; return; }
       const mw = cm.width, mh = cm.height;
       const arr = cm.getAsFloat32Array();
-      // タップ地点の値で前景／背景の極性を自動判定
-      const sx = Math.max(0, Math.min(mw - 1, Math.round(px / W * (mw - 1))));
-      const sy = Math.max(0, Math.min(mh - 1, Math.round(py / H * (mh - 1))));
+      // 最初の点の値で前景／背景の極性を自動判定
+      const p0 = pts[0];
+      const sx = Math.max(0, Math.min(mw - 1, Math.round(p0[0] / W * (mw - 1))));
+      const sy = Math.max(0, Math.min(mh - 1, Math.round(p0[1] / H * (mh - 1))));
       const inv = arr[sy * mw + sx] < 0.5;
-      if(!aiAddMode) mask.fill(0);
-      let hit = 0;
+      // まず新規選択を単体で作る（閾値は固定。信頼度はほぼ二値のため）
+      const newSel = new Float32Array(nVerts);
       for(let k = 0; k < nVerts; k++){
         const gx = Math.max(0, Math.min(mw - 1, Math.round(rest[k*2]   / W * (mw - 1))));
         const gy = Math.max(0, Math.min(mh - 1, Math.round(rest[k*2+1] / H * (mh - 1))));
         let v = arr[gy * mw + gx];
         if(inv) v = 1 - v;
-        const m = smoothstepf(0.30, 0.70, v);
-        if(m > mask[k]) mask[k] = m;
-        if(m > 0.5) hit++;
+        newSel[k] = smoothstepf(0.30, 0.70, v);
+      }
+      // なぞった全点をシードに、連結領域内の距離場をBFSで計算
+      // （飛び地の除去と「ひろがり」減衰を同時に行う）
+      const vertAt = p => {
+        const i = Math.max(0, Math.min(cols, Math.round(p[0] / W * cols)));
+        const j = Math.max(0, Math.min(rows, Math.round(p[1] / H * rows)));
+        return j * nx + i;
+      };
+      const dist = new Int32Array(nVerts).fill(-1);
+      const q = [];
+      for(const p of pts){
+        const vi = vertAt(p);
+        if(newSel[vi] > 0.15 && dist[vi] < 0){ dist[vi] = 0; q.push(vi); }
+      }
+      let head = 0;
+      while(head < q.length){
+        const k = q[head++];
+        const d = dist[k] + 1;
+        const i = k % nx, j = (k - i) / nx;
+        if(i > 0    && dist[k-1]  < 0 && newSel[k-1]  > 0.12){ dist[k-1]  = d; q.push(k-1); }
+        if(i < nx-1 && dist[k+1]  < 0 && newSel[k+1]  > 0.12){ dist[k+1]  = d; q.push(k+1); }
+        if(j > 0    && dist[k-nx] < 0 && newSel[k-nx] > 0.12){ dist[k-nx] = d; q.push(k-nx); }
+        if(j < ny-1 && dist[k+nx] < 0 && newSel[k+nx] > 0.12){ dist[k+nx] = d; q.push(k+nx); }
+      }
+      const seeded = q.length > 0;
+      // 繋がっていない飛び地は捨てる
+      if(seeded) for(let k = 0; k < nVerts; k++) if(dist[k] < 0) newSel[k] = 0;
+      // ひろがり: シードからの距離で減衰させ、部位単位の選択を可能にする
+      const spread = sl("aiTh");
+      if(seeded && spread < 0.97){
+        const maxH = cols + rows;
+        const radius = 2 + spread * spread * maxH;
+        const feather = Math.max(2, radius * 0.35);
+        for(let k = 0; k < nVerts; k++){
+          if(newSel[k] <= 0) continue;
+          let f = (radius - dist[k]) / feather;
+          f = Math.max(0, Math.min(1, f));
+          newSel[k] *= f * f * (3 - 2 * f);
+        }
+      }
+      // 既存マスクへ反映
+      if(!aiAddMode) mask.fill(0);
+      let hit = 0;
+      for(let k = 0; k < nVerts; k++){
+        if(newSel[k] > mask[k]) mask[k] = newSel[k];
+        if(newSel[k] > 0.5) hit++;
         if(mask[k] < 0.05){ off[k*2]=0; off[k*2+1]=0; vel[k*2]=0; vel[k*2+1]=0; }
       }
       uploadMask();
       defaultMask = mask.slice();
       if(hit === 0){
-        hintEl.textContent = "▶ うまく選択できず…別の場所をタップするか筆で調整を。";
+        hintEl.textContent = "▶ うまく選択できず…「ひろがり」を右へ、またはなぞって選択を。";
       } else {
         hintEl.textContent = "▶ 選択完了！「ゆらす」でドラッグ、筆で微調整もできる。";
         // ご褒美ぷるん
