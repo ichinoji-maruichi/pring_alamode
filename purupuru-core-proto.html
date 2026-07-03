@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ぷるぷる物理コア 検証機 v0.5</title>
+<title>ぷるぷる物理コア 検証機 v0.6</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
 <style>
@@ -147,7 +147,7 @@
 </head>
 <body>
 <div class="win">
-  <div class="titlebar">ぷるぷる物理コア 検証機<span class="ver">core v0.5</span><span class="wbtn">_</span><span class="wbtn">□</span><span class="wbtn">×</span></div>
+  <div class="titlebar">ぷるぷる物理コア 検証機<span class="ver">core v0.6</span><span class="wbtn">_</span><span class="wbtn">□</span><span class="wbtn">×</span></div>
   <div class="body">
     <div class="stage"><canvas id="gl"></canvas></div>
     <div class="hint" id="hint">▶ ドラッグでつまんで弾く。青い部分がやわらかい領域。</div>
@@ -717,7 +717,6 @@ function aiPick(pts){
         if(mask[k] < 0.05){ off[k*2]=0; off[k*2+1]=0; vel[k*2]=0; vel[k*2+1]=0; }
       }
       uploadMask();
-      defaultMask = mask.slice();
       if(hit === 0){
         hintEl.textContent = "▶ うまく選択できず…「ひろがり」を右へ、またはなぞって選択を。";
       } else {
