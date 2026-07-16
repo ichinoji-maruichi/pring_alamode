@@ -1,0 +1,4198 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#000080">
+<title>ぷりんあらも〜ど - 流体シミュレーター</title>
+<!-- OGP（第三者がリンクを貼った時のカード表示用。クローラーはJS非実行のため説明は日本語固定）。
+     ※ og:image は公開URLの絶対パスに書き換え、リポジトリ直下に ogp.png（1200×630・不透過・500KB以下）を用意すること。 -->
+<meta property="og:title" content="ぷりんあらも〜ど - 流体シミュレーター">
+<meta property="og:description" content="画像をぷるぷる揺らして、液体をかけて遊べるブラウザトイ。">
+<meta property="og:image" content="https://ichinoji-maruichi.github.io/pring_alamode/ogp.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root{
+    --desk:#008080; --face:#c0c0c0; --hi:#ffffff; --lt:#dfdfdf;
+    --sh:#808080; --dk:#404040; --navy:#000080; --title-b:#1084d0; --ink:#000;
+    /* UIフォント。applyLang() が LANG_FONT で各言語の標準（滑らかな）システムフォントに切り替える。 */
+    --uiFont:"MS UI Gothic","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{min-height:100%;}
+  body{
+    background:var(--desk);
+    font-family:var(--uiFont);
+    color:var(--ink);
+    display:flex; justify-content:center; align-items:flex-start;
+    padding:12px 8px 40px;
+    -webkit-user-select:none; user-select:none;
+  }
+  /* ===== ウィンドウ ===== */
+  .win{
+    width:100%; max-width:1700px;
+    background:var(--face);
+    border:1px solid var(--dk);
+    box-shadow:inset 1px 1px 0 var(--lt), inset -1px -1px 0 var(--sh),
+               inset 2px 2px 0 var(--hi), 3px 3px 0 rgba(0,0,0,.4);
+    padding:3px;
+  }
+  .titlebar{
+    background:linear-gradient(90deg,var(--navy),var(--title-b));
+    color:#fff; font-family:var(--uiFont); font-size:14px;
+    letter-spacing:1px; padding:4px 4px 4px 8px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .titlebar .ver{margin-left:auto; font-size:11px; opacity:.85; padding-right:4px;}
+  .wbtn{
+    width:18px;height:16px; flex:none; background:var(--face);
+    box-shadow:inset -1px -1px 0 var(--dk), inset 1px 1px 0 var(--hi),
+               inset -2px -2px 0 var(--sh), inset 2px 2px 0 var(--lt);
+    font-family:var(--uiFont); font-size:10px; line-height:15px;
+    text-align:center; color:#000; cursor:default;
+  }
+  .wbtn.help{cursor:pointer; font-weight:bold;}
+  .wbtn.help.hl{animation:helpblink .7s steps(2) infinite;}
+  @keyframes helpblink{0%{background:var(--face);}50%{background:#ffe14d;}}
+  /* ===== アプリ本体グリッド ===== */
+  .app{
+    display:grid; gap:6px; padding:6px;
+    grid-template-columns:1fr;
+    grid-template-areas:"file" "center" "mode" "extra";
+  }
+  @media (min-width:860px){
+    .app{
+      grid-template-columns:200px minmax(0,1fr) 290px;
+      grid-template-rows:auto 1fr;
+      grid-template-areas:"file center mode" "extra center mode";
+      align-items:start;
+    }
+    /* 中央カラムをモード列（常に最大パネル分の高さ）に合わせて縦に伸ばす（下の余白をなくす） */
+    .colCenter{align-self:stretch;}
+  }
+  .colFile{grid-area:file; min-width:0;}
+  .colCenter{grid-area:center; min-width:0; min-height:0; display:flex; flex-direction:column;}
+  .colMode{grid-area:mode; min-width:0;}
+  .colExtra{grid-area:extra; min-width:0;}
+  /* ===== 汎用パネル枠 ===== */
+  .box{
+    border:2px groove var(--hi); background:var(--face);
+    padding:8px; margin-bottom:6px;
+  }
+  .box h3{
+    font-family:var(--uiFont); font-size:12px; color:var(--navy);
+    letter-spacing:1px; margin:-2px 0 6px; font-weight:normal;
+  }
+  /* ===== プレビュー ===== */
+  .stage{
+    background:#000; position:relative;
+    box-shadow:inset 1px 1px 0 var(--sh), inset -1px -1px 0 var(--hi),
+               inset 2px 2px 0 var(--dk), inset -2px -2px 0 var(--lt);
+    padding:2px; line-height:0; display:flex; justify-content:center; align-items:center; overflow:hidden;
+    flex:1; min-height:0;
+  }
+  canvas#gl{
+    max-width:100%; max-height:65vh; width:auto; height:auto; display:block;
+    touch-action:none; cursor:grab; transform-origin:center center;
+  }
+  /* デスクトップでは器(.stage)の高さがモード列に合わせて伸びるので、vh基準ではなくcontain-fitで埋める
+     （このルールは上のcanvas#glより後ろに書くことでカスケード順位を確実に上書きする） */
+  @media (min-width:860px){ canvas#gl{max-height:100%;} }
+  canvas#gl.painting{cursor:crosshair;}
+  .dropZone{
+    position:absolute; inset:2px; z-index:5; display:none;
+    align-items:center; justify-content:center; background:rgba(0,0,128,.62);
+    color:#fff; font-family:var(--uiFont); font-size:15px;
+    letter-spacing:1px; pointer-events:none;
+  }
+  body.dragging .dropZone{display:flex;}
+  .hint{
+    margin-top:6px; font-size:12px; padding:4px 8px; background:var(--face);
+    box-shadow:inset 1px 1px 0 var(--sh), inset -1px -1px 0 var(--hi);
+    color:#000; min-height:24px;
+  }
+  /* ===== コントロール共通 ===== */
+  .row{display:flex; align-items:center; gap:8px; margin-top:6px; font-size:12px;}
+  .row label.sl{flex:0 0 78px; text-align:right; color:#000;}
+  .row input[type=range]{flex:1; accent-color:var(--navy); min-width:0;}
+  .valbox{
+    flex:0 0 50px; width:50px; text-align:right; font-size:11px; padding:2px 4px;
+    background:#fff; color:#000; border:none; font-family:inherit; -moz-appearance:textfield; appearance:textfield;
+    box-shadow:inset 1px 1px 0 var(--sh), inset -1px -1px 0 var(--hi),
+               inset 2px 2px 0 var(--dk), inset -2px -2px 0 var(--lt);
+  }
+  .valbox::-webkit-outer-spin-button, .valbox::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+  @media (pointer:coarse){ .valbox{ flex-basis:44px; width:44px; } }
+  .btns{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;}
+  button, .filebtn{
+    font-family:inherit; font-size:12px; padding:7px 10px; background:var(--face);
+    color:#000; border:none;
+    box-shadow:inset -1px -1px 0 var(--dk), inset 1px 1px 0 var(--hi),
+               inset -2px -2px 0 var(--sh), inset 2px 2px 0 var(--lt);
+    cursor:pointer; line-height:1;
+  }
+  button:active, button.on{
+    box-shadow:inset 1px 1px 0 var(--dk), inset -1px -1px 0 var(--hi),
+               inset 2px 2px 0 var(--sh), inset -2px -2px 0 var(--lt);
+    padding:8px 9px 6px 11px;
+  }
+  button.accent{outline:1px solid #000; font-weight:bold;}
+  button.tgl{text-align:center; white-space:nowrap;}   /* トグルで状態が変わっても幅を保つ */
+  button.tglw{min-width:122px; flex:1;}                /* 横幅を揃えるグループ */
+  button:disabled{color:var(--sh); text-shadow:1px 1px 0 var(--hi); cursor:default;}
+  /* 無効時は押し込み表現を出さない（上の button:active を打ち消す） */
+  button:disabled:active{
+    box-shadow:inset -1px -1px 0 var(--dk), inset 1px 1px 0 var(--hi),
+               inset -2px -2px 0 var(--sh), inset 2px 2px 0 var(--lt);
+    padding:7px 10px;
+  }
+  .small{font-size:11px; color:#333; margin-top:6px; line-height:1.5;}
+  input[type=file]{display:none;}
+  input[type=color]{
+    width:44px; height:26px; padding:1px; flex:none; border:none; background:var(--face);
+    box-shadow:inset 1px 1px 0 var(--sh), inset -1px -1px 0 var(--hi); cursor:pointer;
+  }
+  select{
+    font-family:inherit; font-size:12px; background:#fff; color:#000; border:none;
+    padding:4px; flex:1; min-width:0;
+    box-shadow:inset 1px 1px 0 var(--sh), inset -1px -1px 0 var(--hi),
+               inset 2px 2px 0 var(--dk), inset -2px -2px 0 var(--lt);
+  }
+  .filebtn{display:block; text-align:center; margin-bottom:6px;}
+  /* ===== モードタブ ===== */
+  .modetabs{display:flex; gap:2px; margin-bottom:6px;}
+  .modetabs button{flex:1; padding:9px 4px; font-size:13px;}
+  .modetabs button.on{font-weight:bold; color:var(--navy);}
+  /* 3モードの各パネルを同じグリッドセルに重ねて配置し、非表示パネルもvisibility:hiddenで
+     サイズ計算には参加させることで、モード切替でツールの縦幅が変わらないようにする
+     （画像がツールの縦幅より小さい場合はキャンバスは高さいっぱいまで広がってよい） */
+  .mpaneStack{display:grid; min-width:0;}
+  .mpane{grid-area:1/1; visibility:hidden; pointer-events:none; min-width:0; overflow:hidden;}
+  .mpane.on{visibility:visible; pointer-events:auto;}
+  .subtabs{display:flex; gap:2px; margin-top:4px;}
+  .subtabs button{flex:1;}
+  /* ===== レイヤー一覧 ===== */
+  .llist{
+    margin-top:2px; background:#fff; max-height:118px; overflow-y:auto; padding:2px;
+    box-shadow:inset 1px 1px 0 var(--sh), inset -1px -1px 0 var(--hi),
+               inset 2px 2px 0 var(--dk), inset -2px -2px 0 var(--lt);
+  }
+  .lrow{display:flex; align-items:center; gap:6px; padding:4px 6px; font-size:12px; cursor:pointer; color:#000;}
+  .lrow.sel{background:var(--navy); color:#fff;}
+  .lsw{width:12px; height:12px; flex:none; border:1px solid #000;}
+  .lrow .lp{margin-left:auto; font-size:10px; opacity:.75;}
+  /* ===== フル画面プレビューモード ===== */
+  body.fs .win{display:none;}
+  #fsLayer{
+    display:none; position:fixed; inset:0; z-index:900; background:#000;
+    overflow:hidden; touch-action:none;
+  }
+  body.fs #fsLayer{display:block;}
+  #fsLayer canvas{position:absolute; left:50%; top:50%; transform-origin:center center; cursor:grab;}
+  /* フル画面では通常の max-width/max-height 制約を外し、JSでcontain-fit計算した倍率で表示する */
+  body.fs canvas#gl{max-width:none; max-height:none; width:auto; height:auto;}
+  .fsbtns{position:fixed; z-index:910; display:flex; gap:8px;}
+  .fsbtns.tl{left:10px; top:10px;}
+  .fsbtns.tr{right:10px; top:10px;}
+  .fsbtns button{opacity:.82; font-size:13px; padding:9px 12px;}
+  /* ===== 録画カウントダウン & インジケータ ===== */
+  #countdown{
+    position:fixed; inset:0; z-index:950; display:none;
+    align-items:center; justify-content:center; pointer-events:none;
+    font-family:var(--uiFont); font-size:96px; color:#fff;
+    text-shadow:0 0 12px #000, 0 0 4px #000;
+  }
+  #recDot{
+    display:none; align-items:center; gap:5px; color:#fff; font-size:12px;
+    position:fixed; left:50%; transform:translateX(-50%); top:12px; z-index:912;
+    background:rgba(0,0,0,.5); padding:4px 10px; border-radius:2px;
+  }
+  #recDot .led{width:10px; height:10px; border-radius:50%; background:#f00; animation:recblink 1s steps(2) infinite;}
+  @keyframes recblink{50%{opacity:.25;}}
+  .mrecwrap{display:flex; align-items:center; gap:6px;}
+  #bRec{flex:1; color:#800000; font-weight:bold;}
+  #bRec.rec{animation:recblink 1s steps(2) infinite;}
+  /* ===== ヘルプウィンドウ（ヘルプ本体 / 物理項目の説明で共用） ===== */
+  #helpWin, #physHelpWin{
+    display:none; position:fixed; z-index:960; width:min(560px,92vw);
+    left:50%; top:70px; transform:translateX(-50%);
+    background:var(--face); border:1px solid var(--dk);
+    box-shadow:inset 1px 1px 0 var(--lt), inset -1px -1px 0 var(--sh),
+               inset 2px 2px 0 var(--hi), 4px 4px 0 rgba(0,0,0,.45); padding:3px;
+  }
+  #physHelpWin{width:min(420px,92vw); top:110px;}
+  #helpWin.show, #physHelpWin.show{display:block;}
+  #helpWin .htitle, #physHelpWin .htitle{
+    background:linear-gradient(90deg,var(--navy),var(--title-b)); color:#fff;
+    font-family:var(--uiFont); font-size:12px; padding:3px 4px 3px 7px;
+    display:flex; align-items:center; gap:5px; cursor:move; touch-action:none;
+  }
+  #helpWin .htitle .ht, #physHelpWin .htitle .ht{margin-right:auto;}
+  #helpWin .hbody, #physHelpWin .hbody{padding:10px 12px; font-size:12px; line-height:1.7; max-height:70vh; overflow-y:auto;}
+  #helpWin .hbody b, #physHelpWin .hbody b{color:var(--navy);}
+  #helpWin .hbody ol, #physHelpWin .hbody ol{margin:4px 0 8px 18px;}
+  #helpWin .hbody a, #physHelpWin .hbody a{color:var(--navy); word-break:break-all;}
+  /* ===== 筆カーソル（範囲の塗り/消し中に半径を表示） ===== */
+  .brushCursor{
+    position:fixed; pointer-events:none; z-index:15; border-radius:50%;
+    border:1.5px solid rgba(0,0,80,.8); display:none; transform:translate(-50%,-50%);
+  }
+  /* ===== AIなぞり軌跡（自動選択中のプレビュー代替） ===== */
+  #aiTrailSvg{position:absolute; pointer-events:none; z-index:6; display:none;}
+  /* ===== パッド操作（疑似加速度センサー） ===== */
+  .padWrap{display:flex; justify-content:center; margin-top:8px;}
+  #padArea{
+    width:140px; height:140px; background:#fff; position:relative; touch-action:none; cursor:grab;
+    box-shadow:inset 1px 1px 0 var(--sh), inset -1px -1px 0 var(--hi),
+               inset 2px 2px 0 var(--dk), inset -2px -2px 0 var(--lt);
+  }
+  #padKnob{
+    position:absolute; left:50%; top:50%; width:26px; height:26px; border-radius:50%;
+    background:var(--navy); box-shadow:0 1px 3px rgba(0,0,0,.5);
+    transform:translate(-50%,-50%); pointer-events:none;
+  }
+  /* ===== レイヤー物理: アンドゥ/リドゥ ===== */
+  #bUndo:disabled, #bRedo:disabled{opacity:.5;}
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="titlebar">
+    ぷりんあらも〜ど<span class="ver" data-i18n="app.ver">流体シミュレーター v3.0</span>
+    <span class="wbtn help" id="btnHelp" data-i18n-title="app.helpTitle" title="ヘルプ">?</span>
+    <span class="wbtn">_</span><span class="wbtn">□</span><span class="wbtn">×</span>
+  </div>
+
+  <div class="app">
+    <!-- === 左カラム: ファイル/録画/その他 === -->
+    <div class="colFile">
+      <div class="box">
+        <label class="filebtn" for="file" data-i18n="file.load">画像を読み込む</label>
+        <input type="file" id="file" accept="image/*">
+        <div class="small" data-i18n="file.loadNote">ドラッグ&amp;ドロップ / 貼り付けでも読み込めます。</div>
+        <div class="mrecwrap" style="margin-top:6px;"><button id="bRec">● 録画</button></div>
+      </div>
+      <div class="box">
+        <button id="bFull" style="width:100%;" data-i18n="fs.enter">⛶ フル画面で遊ぶ</button>
+        <div class="small" data-i18n="fs.enterNote">画面いっぱいで拡大・移動して触れます。スマホの画面録画と好相性。</div>
+      </div>
+      <!-- 言語切替: 見出しとoptionは「その言語の自称」なので翻訳しない固定文言 -->
+      <div class="box">
+        <h3>Language</h3>
+        <select id="langSel" style="width:100%;">
+          <option value="ja">日本語</option>
+          <option value="en">English</option>
+          <option value="zh-Hant">繁體中文</option>
+          <option value="zh-Hans">简体中文</option>
+          <option value="ko">한국어</option>
+        </select>
+      </div>
+      <div class="box">
+        <h3 data-i18n="save.title">設定の保存</h3>
+        <div class="btns">
+          <button id="bExport" style="flex:1;" data-i18n="save.export">エクスポート</button>
+          <label class="filebtn" for="importFile" style="flex:1; margin:0; padding:7px 10px;" data-i18n="save.import">インポート</label>
+          <input type="file" id="importFile" accept="application/json,.json">
+        </div>
+        <div class="small" data-i18n="save.note">画像・レイヤー・各レイヤーの揺れ設定をまとめて保存／復元します。</div>
+      </div>
+    </div>
+
+    <!-- === 中央: プレビュー === -->
+    <div class="colCenter">
+      <div class="stage" id="stage"><canvas id="gl"></canvas><div class="dropZone" data-i18n="stage.drop">画像をドロップして読み込み</div>
+        <svg id="aiTrailSvg"><polyline id="aiTrailLine" fill="none" stroke="rgba(255,60,60,0.85)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="brushCursor" id="brushCursorOuter"></div>
+      <div class="brushCursor" id="brushCursorInner" style="border-color:rgba(0,0,80,.35);"></div>
+      <div class="hint" id="hint">▶ タップで押し込み、離すとぷるんと弾む。</div>
+    </div>
+
+    <!-- === 右カラム: モード選択 + パラメータ === -->
+    <div class="colMode">
+      <div class="modetabs">
+        <button class="mtab on" data-mode="play" data-i18n="mode.play">ゆらす</button>
+        <button class="mtab" data-mode="setup" data-i18n="mode.setup">ゆれ設定</button>
+        <button class="mtab" data-mode="liquid" data-i18n="mode.liquid">かける</button>
+      </div>
+
+      <div class="mpaneStack">
+      <!-- モードA: ゆらす -->
+      <div class="mpane on" id="pane-play">
+        <div class="box">
+          <h3 data-i18n="play.tapDrag">タップ / ドラッグ</h3>
+          <div class="row"><label class="sl" data-i18n="play.tapStrength">タップの強さ</label><input type="range" id="tapStrength" min="0" max="1" step="0.01" value="0.6"></div>
+          <div class="small" data-i18n="play.tapStrengthNote">弾く強さ。下げると軽くふるっと、上げるほど強くぶるんと弾む。素早く離すとさらに強く。</div>
+        </div>
+        <div class="box">
+          <h3 data-i18n="play.shakeAll">全体をゆらす</h3>
+          <div class="btns">
+            <button id="bPokeV" class="accent" data-i18n="play.joltV">縦ゆれビクン</button>
+            <button id="bPokeH" class="accent" data-i18n="play.joltH">横ゆれビクン</button>
+            <button id="bReset" data-i18n="play.still">静止</button>
+          </div>
+          <div class="row"><label class="sl" data-i18n="play.strength">強さ</label><input type="range" id="pokeStrength" min="0.2" max="2" step="0.05" value="1"></div>
+        </div>
+        <div class="box">
+          <h3 data-i18n="play.autoJiggle">自動ゆれ</h3>
+          <div class="btns"><button id="bAuto" class="tgl">自動ゆれ: オフ</button></div>
+          <div class="row"><label class="sl" data-i18n="play.pattern">パターン</label>
+            <select id="autoDir">
+              <option value="v" data-i18n="play.pat.v">縦</option><option value="h" data-i18n="play.pat.h">横</option>
+              <option value="circle" data-i18n="play.pat.circle">円</option><option value="circle2" data-i18n="play.pat.circle2">円（逆回転）</option>
+              <option value="diag1" data-i18n="play.pat.diag1">斜め45度（左）</option><option value="diag2" data-i18n="play.pat.diag2">斜め45度（右）</option>
+              <option value="ripple" data-i18n="play.pat.ripple">波紋</option><option value="impulseV" data-i18n="play.pat.impulseV">連続縦ゆれ</option>
+              <option value="random" data-i18n="play.pat.random">ランダム</option>
+            </select>
+          </div>
+          <div class="row"><label class="sl" data-i18n="play.intensity">強度</label><input type="range" id="autoStr" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="row"><label class="sl" data-i18n="play.speed">速さ</label><input type="range" id="autoSpd" min="0" max="1" step="0.01" value="0.5"></div>
+        </div>
+        <div class="box">
+          <h3 data-i18n="play.sensor">センサーでゆらす</h3>
+          <div class="btns"><button id="bAccel" class="tgl">加速度センサー: オフ</button></div>
+          <div class="row"><label class="sl" data-i18n="play.sensitivity">感度</label><input type="range" id="sensV" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="small" data-i18n="play.sensorNote">スマホを振ると揺れます（要許可）。</div>
+        </div>
+        <div class="box">
+          <h3 data-i18n="play.pad">パッドで振る（PC向け）</h3>
+          <div class="padWrap"><div id="padArea"><div id="padKnob"></div></div></div>
+          <div class="small" data-i18n="play.padNote">パッド上でドラッグすると、入れ物を振り回している慣性で中身だけが揺れる（画像自体は動かない）。速く動かすほど強く揺れる。ノブは戻さなくてよい。</div>
+        </div>
+      </div>
+
+      <!-- モードB: ゆれ設定 -->
+      <div class="mpane" id="pane-setup">
+        <div class="box">
+          <h3 data-i18n="setup.layers">レイヤー</h3>
+          <div class="llist" id="layerList"></div>
+          <div class="btns">
+            <button id="bLAdd" data-i18n="setup.lAdd">追加</button><button id="bLDel" data-i18n="setup.lDel">削除</button>
+            <button id="bLRename" data-i18n="setup.lRename">名前</button><button id="bLUp">↑</button><button id="bLDown">↓</button>
+          </div>
+          <div class="row"><label class="sl" style="flex:0 0 108px;" data-i18n="setup.layerColor">レイヤー・マスク色</label><input type="color" id="layerColor" value="#1a1ab8">
+            <span class="small" style="margin:0;" data-i18n="setup.layerColorNote">見えづらい時に変更</span></div>
+        </div>
+        <div class="box">
+          <h3 style="display:flex; align-items:center;"><span data-i18n="setup.physTitle">選択中レイヤーの物理</span>
+            <span class="wbtn help" id="btnPhysHelp" data-i18n-title="phys.helpBtnTitle" title="項目の説明" style="margin-left:auto;">?</span></h3>
+          <div class="row"><label class="sl" data-i18n="setup.preset">プリセット</label><select id="presetSel"></select></div>
+          <div class="row"><label class="sl" data-i18n="setup.soft">やわらかさ</label><input type="range" id="soft" min="0" max="1" step="0.01" value="0.65"></div>
+          <div class="row"><label class="sl" data-i18n="setup.spread">ゆれの伝播</label><input type="range" id="spread" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="row"><label class="sl" data-i18n="setup.settle">おさまり</label><input type="range" id="settle" min="0" max="1" step="0.01" value="0.35"></div>
+          <div class="row"><label class="sl" data-i18n="setup.amp">ふり幅</label><input type="range" id="amp" min="0" max="1" step="0.01" value="1"></div>
+          <div class="row"><label class="sl" data-i18n="setup.anisoAngle">揺れやすい方向</label><input type="range" id="anisoAngle" min="0" max="180" step="1" value="90"></div>
+          <div class="row"><label class="sl" data-i18n="setup.anisoRatio">異方性の強さ</label><input type="range" id="anisoRatio" min="1" max="3" step="0.05" value="1"></div>
+          <div class="btns" style="align-items:center;">
+            <span class="small" style="margin:0;" data-i18n="setup.holdPreview">押してる間だけ揺らす</span>
+            <button id="bPreviewActive" style="padding:5px 7px; font-size:10px;" data-i18n="setup.previewActive">選択レイヤー</button>
+            <button id="bPreviewAll" style="padding:5px 7px; font-size:10px;" data-i18n="setup.previewAll">全レイヤー</button>
+          </div>
+        </div>
+        <div class="box">
+          <h3 data-i18n="setup.maskTitle">範囲（マスク）</h3>
+          <div class="subtabs">
+            <button data-sub="add" class="on" id="subAdd" data-i18n="setup.paint">塗る</button>
+            <button data-sub="erase" id="subErase" data-i18n="setup.erase">消す</button>
+            <button data-sub="ai" id="subAI" data-i18n="setup.ai">自動選択</button>
+          </div>
+          <div id="brushBox">
+            <div class="row"><label class="sl" data-i18n="setup.brushSize">筆サイズ</label><input type="range" id="brush" min="0.01" max="0.15" step="0.005" value="0.08"></div>
+            <div class="row"><label class="sl" data-i18n="setup.brushHard">筆の硬さ</label><input type="range" id="brushHard" min="0" max="1" step="0.01" value="0.6"></div>
+            <div class="row"><label class="sl" data-i18n="setup.brushDense">筆の濃さ</label><input type="range" id="brushDense" min="0" max="1" step="0.01" value="1"></div>
+            <div class="btns">
+              <button id="bUndo" disabled data-i18n="setup.undo">1つ前に戻す(Z)</button>
+              <button id="bRedo" disabled data-i18n="setup.redo">やり直す(Y)</button>
+            </div>
+          </div>
+          <div class="btns">
+            <button id="bMask" class="tgl on">範囲表示: オン</button>
+            <button id="bLClear" data-i18n="setup.clearArea">この層の範囲を消去</button>
+          </div>
+          <div class="row"><label class="sl" data-i18n="setup.maskOpacity">マスク濃さ</label><input type="range" id="maskOpacity" min="0.1" max="1" step="0.01" value="0.75"></div>
+          <div id="aiBox" style="display:none;">
+            <h3 style="margin-top:10px;" data-i18n="setup.aiTitle">自動選択設定</h3>
+            <div class="small" style="margin-top:0;" data-i18n="setup.aiNote">揺らしたい物をタップ／なぞると自動で範囲になります。</div>
+            <div class="small" id="aiStatus" style="display:none;" data-i18n="setup.aiStatus">AIを準備しています…（初回のみ数MB）</div>
+            <div class="btns" id="aiRetryRow" style="display:none;"><button id="bAILoad" data-i18n="setup.aiReload">AIを再準備</button></div>
+            <div class="btns" style="align-items:center;">
+              <button id="bAIAdd" class="tgl on">範囲追加: オン</button>
+              <span class="small" style="margin:0;" data-i18n="setup.aiAddNote">複数選ぶ時はオン。1箇所だけ選び直す時はオフ。</span>
+            </div>
+            <div class="row"><label class="sl" data-i18n="setup.aiSpread">ひろがり</label><input type="range" id="aiTh" min="0" max="1" step="0.01" value="1"></div>
+            <div class="small" data-i18n="setup.aiSpreadNote">自動選択範囲の広さ。数値が少ないと細かい範囲で選べます。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- モードC: かける -->
+      <div class="mpane" id="pane-liquid">
+        <div class="box">
+          <h3 data-i18n="liq.title">液体設定</h3>
+          <div class="row">
+            <label class="sl" data-i18n="liq.color">いろ</label><input type="color" id="lqColor" value="#fbf3e0">
+            <label style="flex:0 0 30px; text-align:right;" data-i18n="liq.opacity">濃さ</label>
+            <input type="range" id="lqOp" min="0.2" max="1" step="0.01" value="0.85">
+          </div>
+          <div class="row"><label class="sl" data-i18n="liq.visc">とろみ</label><input type="range" id="lqVisc" min="0" max="1" step="0.01" value="0.55"></div>
+          <div class="row"><label class="sl" data-i18n="liq.drip">垂れ強度</label><input type="range" id="lqDrip" min="0" max="1" step="0.01" value="0.6"></div>
+          <div class="row"><label class="sl" data-i18n="liq.size">大きさ</label><input type="range" id="lqSize" min="0.03" max="0.2" step="0.005" value="0.09"></div>
+          <div class="btns"><button id="bLiqClear" data-i18n="liq.clear">液体を消す</button></div>
+        </div>
+        <div class="box">
+          <h3 data-i18n="liq.tiltTitle">傾き反応</h3>
+          <div class="btns"><button id="bTilt" class="tgl">傾きセンサー: オフ</button></div>
+          <div class="row"><label class="sl" data-i18n="play.sensitivity">感度</label><input type="range" id="tiltV" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="small" data-i18n="liq.tiltNote">スマホを傾けると流れる向きが変わります（左右の符号は自動補正）。</div>
+        </div>
+      </div>
+      </div><!-- /mpaneStack -->
+
+      <!-- 表示（拡縮・移動）: 3モード共通 -->
+      <div class="box" id="zoomBox">
+        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+          <h3 style="margin:0; flex:none;" data-i18n="view.title">表示</h3>
+          <div class="btns" style="margin:0 0 0 auto;">
+            <button id="bZoomOut" style="padding:5px 10px;">−</button>
+            <button id="bZoomIn" style="padding:5px 10px;">＋</button>
+            <span id="zoomPct" style="align-self:center; font-size:11px; min-width:38px; text-align:center;">100%</span>
+            <button id="bZoomReset" style="padding:5px 8px; font-size:11px;" data-i18n="view.reset">リセット</button>
+          </div>
+        </div>
+        <div class="small" style="font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" data-i18n="view.note">ホイール/ピンチで拡縮。Shift+ドラッグ/2本指で移動。</div>
+      </div>
+    </div>
+
+    <!-- === その他（オプション/情報） === -->
+    <div class="colExtra">
+      <div class="box">
+        <h3 data-i18n="rec.settings">録画設定</h3>
+        <div class="row"><label class="sl" data-i18n="rec.length">長さ</label>
+          <select id="recSec"><option value="3" data-i18n="rec.sec3">3秒</option><option value="5" selected data-i18n="rec.sec5">5秒</option><option value="10" data-i18n="rec.sec10">10秒</option></select>
+        </div>
+        <div class="btns"><button id="bCrop" class="tgl tglw">端をクロップ: オフ</button></div>
+        <div class="small" data-i18n="rec.cropNote">揺れではみ出た背景を隠すよう画像の端を切り取ります（揺れが大きいほど内側だけ写ります）。</div>
+        <div class="btns"><button id="bWM" class="tgl tglw">透かし: オフ</button></div>
+        <div class="small" data-i18n="rec.wmNote">オンで右下にツール名を控えめに表示。入れてくれると開発の励みになります。</div>
+      </div>
+      <div class="box">
+        <h3 data-i18n="misc.title">その他</h3>
+        <div class="btns"><button id="bSE" class="tgl tglw">効果音: オン</button></div>
+        <div class="row"><label class="sl" data-i18n="misc.seVolume">音量</label><input type="range" id="seVol" min="0" max="1" step="0.01" value="0.5"></div>
+        <div class="row"><label class="sl" data-i18n="misc.seSound">ゆれの音</label>
+          <select id="sePreset" style="flex:1; min-width:0;">
+            <option value="ahun" data-i18n="sePreset.ahun">アッフン</option>
+            <option value="boyon" data-i18n="sePreset.boyon">ボヨン</option>
+            <option value="poyon" data-i18n="sePreset.poyon">ぽよん</option>
+            <option value="biyon" data-i18n="sePreset.biyon">びよーん</option>
+          </select></div>
+        <div class="btns"><button id="bHaptic" class="tgl tglw">振動: オフ</button></div>
+        <div class="small" data-i18n="misc.hapticNote">揺れが大きい瞬間にスマホが振動します（対応端末のみ）。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- フル画面レイヤー -->
+<div id="fsLayer">
+  <div class="fsbtns tl"><button id="bFsBack" data-i18n="fs.back">← もどる</button></div>
+  <div class="fsbtns tr">
+    <button id="bFsPlay" class="tgl" data-i18n="mode.play">ゆらす</button>
+    <button id="bFsLiquid" class="tgl" data-i18n="mode.liquid">かける</button>
+    <button id="bFsRec">● 録画</button>
+  </div>
+</div>
+<div id="recDot"><span class="led"></span><span id="recDotTxt" data-i18n="fs.recDot">録画中</span></div>
+<div id="countdown"></div>
+
+<!-- ヘルプ -->
+<div id="helpWin">
+  <div class="htitle"><span class="ht" data-i18n="help.title">ヘルプ</span><span class="wbtn" id="bHelpClose">×</span></div>
+  <div class="hbody">
+    <!-- 本文は I18N の help.body（言語ごとのHTML）で差し替わる -->
+    <div data-i18n-html="help.body"></div>
+    <a href="https://www.google.com/search?q=%E3%83%97%E3%83%AA%E3%83%B3%E3%82%A2%E3%83%A9%E3%83%A2%E3%83%BC%E3%83%89&tbm=isch" target="_blank" rel="noopener" data-i18n="help.imgSearch">画像検索で見る</a><br><br>
+    <hr style="border:none; border-top:1px solid var(--sh); margin:6px 0;">
+    <!-- 免責・著作権・リンクは法的文言のため全言語で原文維持（翻訳しない） -->
+    <b>免責</b><br>
+    作者は本サイトの利用及び生成物の使用で生じた損害について責任を負いません。<br><br>
+    Copyright (C) © 2026 うんぽこ<br>
+    <a href="https://ichinoji-maruichi.github.io/" target="_blank" rel="noopener">https://ichinoji-maruichi.github.io/</a><br>
+    X: <a href="https://x.com/unpokopokopop" target="_blank" rel="noopener">@unpokopokopop</a><br>
+    ちちぷい: うんぽこ
+  </div>
+</div>
+
+<!-- 物理項目の説明 -->
+<div id="physHelpWin">
+  <div class="htitle"><span class="ht" data-i18n="phys.title">選択中レイヤーの物理</span><span class="wbtn" id="bPhysHelpClose">×</span></div>
+  <div class="hbody" data-i18n-html="phys.body"></div>
+</div>
+
+<script>
+"use strict";
+// ============ i18n ============
+// ja が原文（正）。言語追加は「I18N に辞書を1個足す」＋「#langSel に <option> を1行足す」だけ。
+// ブランド名「ぷりんあらも〜ど」・免責/著作権・保存ファイル名は全言語共通で翻訳しない。
+const I18N = {
+  ja: {
+    "common.on": "オン",
+    "common.off": "オフ",
+    "app.subtitle": "流体シミュレーター",
+    "app.ver": "流体シミュレーター v3.0",
+    "app.helpTitle": "ヘルプ",
+
+    "mode.play": "ゆらす",
+    "mode.setup": "ゆれ設定",
+    "mode.liquid": "かける",
+    "fs.back": "← もどる",
+    "fs.recDot": "録画中",
+
+    "file.load": "画像を読み込む",
+    "file.loadNote": "ドラッグ&ドロップ / 貼り付けでも読み込めます。",
+    "rec.btn": "● 録画",
+    "rec.btnRecording": "■ 録画中",
+    "rec.btnStop": "■ 停止",
+    "fs.enter": "⛶ フル画面で遊ぶ",
+    "fs.enterNote": "画面いっぱいで拡大・移動して触れます。スマホの画面録画と好相性。",
+    "save.title": "設定の保存",
+    "save.export": "エクスポート",
+    "save.import": "インポート",
+    "save.note": "画像・レイヤー・各レイヤーの揺れ設定をまとめて保存／復元します。",
+    "stage.drop": "画像をドロップして読み込み",
+
+    "play.tapDrag": "タップ / ドラッグ",
+    "play.tapStrength": "タップの強さ",
+    "play.tapStrengthNote": "弾く強さ。下げると軽くふるっと、上げるほど強くぶるんと弾む。素早く離すとさらに強く。",
+    "play.shakeAll": "全体をゆらす",
+    "play.joltV": "縦ゆれビクン",
+    "play.joltH": "横ゆれビクン",
+    "play.still": "静止",
+    "play.strength": "強さ",
+    "play.autoJiggle": "自動ゆれ",
+    "play.pattern": "パターン",
+    "play.pat.v": "縦",
+    "play.pat.h": "横",
+    "play.pat.circle": "円",
+    "play.pat.circle2": "円（逆回転）",
+    "play.pat.diag1": "斜め45度（左）",
+    "play.pat.diag2": "斜め45度（右）",
+    "play.pat.ripple": "波紋",
+    "play.pat.impulseV": "連続縦ゆれ",
+    "play.pat.random": "ランダム",
+    "play.intensity": "強度",
+    "play.speed": "速さ",
+    "play.sensor": "センサーでゆらす",
+    "play.accel": "加速度センサー",
+    "play.sensitivity": "感度",
+    "play.sensorNote": "スマホを振ると揺れます（要許可）。",
+    "play.pad": "パッドで振る（PC向け）",
+    "play.padNote": "パッド上でドラッグすると、入れ物を振り回している慣性で中身だけが揺れる（画像自体は動かない）。速く動かすほど強く揺れる。ノブは戻さなくてよい。",
+
+    "setup.layers": "レイヤー",
+    "setup.lAdd": "追加",
+    "setup.lDel": "削除",
+    "setup.lRename": "名前",
+    "setup.layerColor": "レイヤー・マスク色",
+    "setup.layerColorNote": "見えづらい時に変更",
+    "setup.physTitle": "選択中レイヤーの物理",
+    "setup.preset": "プリセット",
+    "preset.puru": "ぷるぷる",
+    "preset.hair": "髪（サラサラ）",
+    "preset.bounce": "弾む",
+    "preset.soft": "柔らか",
+    "preset.heavy": "重い",
+    "setup.soft": "やわらかさ",
+    "setup.spread": "ゆれの伝播",
+    "setup.settle": "おさまり",
+    "setup.amp": "ふり幅",
+    "setup.anisoAngle": "揺れやすい方向",
+    "setup.anisoRatio": "異方性の強さ",
+    "setup.holdPreview": "押してる間だけ揺らす",
+    "setup.previewActive": "選択レイヤー",
+    "setup.previewAll": "全レイヤー",
+    "setup.maskTitle": "範囲（マスク）",
+    "setup.paint": "塗る",
+    "setup.erase": "消す",
+    "setup.ai": "自動選択",
+    "setup.brushSize": "筆サイズ",
+    "setup.brushHard": "筆の硬さ",
+    "setup.brushDense": "筆の濃さ",
+    "setup.undo": "1つ前に戻す(Z)",
+    "setup.redo": "やり直す(Y)",
+    "setup.showArea": "範囲表示",
+    "setup.clearArea": "この層の範囲を消去",
+    "setup.maskOpacity": "マスク濃さ",
+    "setup.aiTitle": "自動選択設定",
+    "setup.aiNote": "揺らしたい物をタップ／なぞると自動で範囲になります。",
+    "setup.aiStatus": "AIを準備しています…（初回のみ数MB）",
+    "setup.aiReload": "AIを再準備",
+    "setup.aiAdd": "範囲追加",
+    "setup.aiAddNote": "複数選ぶ時はオン。1箇所だけ選び直す時はオフ。",
+    "setup.aiSpread": "ひろがり",
+    "setup.aiSpreadNote": "自動選択範囲の広さ。数値が少ないと細かい範囲で選べます。",
+    "layer.defaultName": "レイヤー",
+    "layer.namePrompt": "レイヤー名",
+    "layer.softChip": "やわ",
+    "layer.cherry": "チェリー",
+    "layer.pudding": "プリン",
+
+    "liq.title": "液体設定",
+    "liq.color": "いろ",
+    "liq.opacity": "濃さ",
+    "liq.visc": "とろみ",
+    "liq.drip": "垂れ強度",
+    "liq.size": "大きさ",
+    "liq.clear": "液体を消す",
+    "liq.tiltTitle": "傾き反応",
+    "liq.tilt": "傾きセンサー",
+    "liq.tiltNote": "スマホを傾けると流れる向きが変わります（左右の符号は自動補正）。",
+
+    "view.title": "表示",
+    "view.reset": "リセット",
+    "view.note": "ホイール/ピンチで拡縮。Shift+ドラッグ/2本指で移動。",
+    "rec.settings": "録画設定",
+    "rec.length": "長さ",
+    "rec.sec3": "3秒",
+    "rec.sec5": "5秒",
+    "rec.sec10": "10秒",
+    "rec.crop": "端をクロップ",
+    "rec.cropNote": "揺れではみ出た背景を隠すよう画像の端を切り取ります（揺れが大きいほど内側だけ写ります）。",
+    "rec.wm": "透かし",
+    "rec.wmNote": "オンで右下にツール名を控えめに表示。入れてくれると開発の励みになります。",
+    "misc.title": "その他",
+    "misc.haptic": "振動",
+    "misc.hapticNote": "揺れが大きい瞬間にスマホが振動します（対応端末のみ）。",
+    "misc.se": "効果音",
+    "misc.seVolume": "音量",
+    "misc.seSound": "ゆれの音",
+    "sePreset.ahun": "アッフン",
+    "sePreset.boyon": "ボヨン",
+    "sePreset.poyon": "ぽよん",
+    "sePreset.biyon": "びよーん",
+
+    "hint.play": "▶ タップで押し込み、離すとぷるんと弾む。",
+    "hint.liquid": "▶ タップで液体をかける。ドラッグで注ぐ。",
+    "hint.setupAI": "▶ 揺らしたい物をタップ／なぞると範囲になる。",
+    "hint.setupAdd": "▶ なぞった所が「揺れる範囲」になる（選択中の層）。",
+    "hint.setupErase": "▶ なぞった所の揺れる範囲を消す。",
+    "hint.imgLoaded": "▶ 画像を読み込みました。「塗る」で揺らしたい範囲を指定するか、自動選択でAIに任せよう。",
+    "hint.layerCap": "▶ レイヤーは最大{n}枚までです。",
+    "hint.layerAdded": "▶ 新しい層を追加。「塗る」かAI選択で範囲を決めてください。",
+    "hint.lastLayer": "▶ 最後の1層は消せません。",
+    "hint.loadFirst": "▶ 先に画像を読み込んでください。",
+    "hint.saved": "▶ 設定を保存しました（purin-settings.json）。",
+    "hint.badFile": "▶ 読み込めないファイルです。",
+    "hint.badSettings": "▶ 対応していない設定ファイルです。",
+    "hint.settingsLoaded": "▶ 設定を読み込みました。",
+    "hint.aiPreparing": "▶ 自動選択の準備中…（初回のみ数MB）",
+    "hint.aiReady": "▶ 自動選択の準備完了！揺らしたい物をタップ／なぞってください。",
+    "hint.aiFailed": "▶ AIの読み込みに失敗（通信環境を確認）。筆でも塗れます。",
+    "hint.aiWait": "▶ AIを準備中です。もう少しお待ちください。",
+    "hint.aiStart": "▶ 自動選択の準備をします…",
+    "hint.aiBusy": "▶ 解析中…",
+    "hint.aiNoPick": "▶ 選択できなかった…筆で塗ってください。",
+    "hint.aiNoHit": "▶ うまく選択できず…「ひろがり」を右へ、またはなぞって選択を。",
+    "hint.aiApplied": "▶ 「{name}」に範囲を反映！物理を調整して揺らそう。",
+    "hint.aiError": "▶ 解析エラー。もう一度お試しください。",
+    "hint.aiSelecting": "▶ AIが揺れる範囲を選んでいます…",
+    "hint.autoSelectedPlay": "▶ AIが範囲を選びました。そのまま揺らして遊べます。調整は「ゆれ設定」で。",
+    "hint.fullMaskApplied": "▶ まるごと揺れるようにしました。範囲を絞るなら「ゆれ設定」へ。",
+    "hint.noSensor": "▶ センサーを使えませんでした。",
+    "hint.noRec": "▶ この環境は録画に対応していません。",
+    "hint.recFail": "▶ 録画を開始できませんでした。",
+    "hint.recording": "▶ 録画中…（{s}秒／もう一度押すと停止）",
+    "hint.recEmpty": "▶ 録画データが空でした。",
+    "hint.recSaved": "▶ 動画を保存しました（{f}）。",
+    "hint.recShared": "▶ 保存＆共有しました！",
+
+    "phys.title": "選択中レイヤーの物理",
+    "phys.helpBtnTitle": "項目の説明",
+    "phys.body": `<b>プリセット</b>: 代表的な組み合わせを一発設定。選んだ後も各スライダーで微調整できます。<br><br>
+<b>やわらかさ</b>: 元の形に戻ろうとする力の弱さ。上げるほど柔らかく、ゆっくり大きくたわむ。下げると硬く、キビキビ戻る。<br><br>
+<b>ゆれの伝播</b>: となり同士の引っ張り合いの強さ。上げると一点を揺らした時に周りまで一緒に波打つ。下げるとその場だけが揺れる。<br><br>
+<b>おさまり</b>: 揺れが静まる速さ。上げるとすぐ止まり、下げるといつまでもぷるぷる残る。<br><br>
+<b>ふり幅</b>: この範囲の揺れ全体の大きさ。0にすると揺れなくなる。<br><br>
+<b>揺れやすい方向</b>: 揺れやすくしたい方向の角度。90°が縦、0°/180°が横。<br><br>
+<b>異方性の強さ</b>: 1.0で全方向に均等。上げるほど「揺れやすい方向」に沿ってだけ揺れ、直交方向は硬くなる。髪は横向き弱め、垂れた布は縦、などの表現に。`,
+
+    "help.title": "ヘルプ",
+    "help.imgSearch": "画像検索で見る",
+    "help.body": `<b>ぷりんあらも〜ど</b> は画像をぷるぷる揺らして、液体をかけられる流体シミュレーターです。すべてブラウザ内で動き、画像がどこかに送信されることはありません。<br><br>
+<b>あそびかたの流れ</b>
+<ol>
+  <li>画像を読み込む（左上のボタン / ドラッグ&amp;ドロップ / コピペ）</li>
+  <li>「ゆれ設定」で揺らしたい範囲を塗る。AIの自動選択に任せてもOK</li>
+  <li>「ゆらす」で押して、離して、ぷるんと弾ませる</li>
+  <li>気が済んだら「かける」で液体をかけて眺める</li>
+</ol>
+<b>3つのモード</b>
+<ol>
+  <li><b>ゆらす</b>: タップで押し込み、離すと弾む。全体ビクン・自動ゆれ・スマホを振る・パッドで振り回す、と揺らし方はいろいろ</li>
+  <li><b>ゆれ設定</b>: 揺れる範囲と揺れ方を決める。範囲はレイヤーで分けられ、レイヤーごとに物理（やわらかさ等）を変えられる。髪だけサラサラ、他はぷるぷる、なども可能。物理項目の意味は「選択中レイヤーの物理」右の[?]から<br>PC: B=塗る / E=消す / X=切替</li>
+  <li><b>かける</b>: 液体をタップでかけ、ドラッグで注ぐ。重力に従って垂れて、乾いていく。スマホは傾けると流れる向きが変わる</li>
+</ol>
+<b>レイヤーとは</b>: 「揺れる範囲＋その揺れ方」のセットです。最大8枚。上のレイヤーが優先され、範囲が重なった部分は上の設定で揺れます。<br><br>
+<b>筆の硬さ・濃さ</b>: 硬さ＝境界のなじみ方（低いほど縁がふわっと柔らかい）。濃さ＝1ストロークで塗れる強さの上限（低いほど弱く揺れる範囲になる）。一度離して塗り重ねると濃くなっていきます。「消す」にも同じ設定が効きます。<br><br>
+<b>自動選択（AI）</b>: 揺らしたい物をタップ／なぞると範囲を自動で作ります。初回だけモデル（数MB）をダウンロードします。解析は端末内で完結し、画像は送信されません。<br><br>
+<b>フル画面で遊ぶ</b>: 画面いっぱいに表示して、2本指で拡大・移動しながら触れます。右上のボタンで「ゆらす」と「かける」を切り替えられます。<br><br>
+<b>録画</b>: 左の「● 録画」から。3秒カウントダウンの後に録画され、終わると保存/共有できます。長さ・クロップ・透かしは「録画設定」で。フル画面はスマホ本体の画面録画で撮るのもおすすめ。<br><br>
+<b>うまくいかない時</b>
+<ol>
+  <li>スマホを振っても揺れない → 「加速度センサー」をオンにして、許可ダイアログで許可してください（iPhoneは初回に確認が出ます）</li>
+  <li>動きがカクカクする → 大きすぎる画像は自動で縮小されますが、他のタブやアプリを閉じると改善することがあります</li>
+  <li>録画が保存できない → お使いのブラウザが録画非対応の可能性。フル画面＋本体の画面録画をお試しください</li>
+  <li>音が出ない → iPhoneはマナーモード中、効果音が鳴りません（本体仕様）</li>
+</ol>
+<b>「プリンアラモード」とは</b><br>
+日本発祥のスイーツで、プリンの上にアイスクリーム・フルーツ・生クリームを乗せた豪華版です。`,
+  },
+
+  en: {
+    "common.on": "ON",
+    "common.off": "OFF",
+    "app.subtitle": "Fluid Simulator",
+    "app.ver": "Fluid Simulator v3.0",
+    "app.helpTitle": "Help",
+
+    "mode.play": "Jiggle",
+    "mode.setup": "Setup",
+    "mode.liquid": "Pour",
+    "fs.back": "← Back",
+    "fs.recDot": "REC",
+
+    "file.load": "Load Image",
+    "file.loadNote": "You can also drag & drop or paste an image.",
+    "rec.btn": "● Record",
+    "rec.btnRecording": "■ Recording",
+    "rec.btnStop": "■ Stop",
+    "fs.enter": "⛶ Play Fullscreen",
+    "fs.enterNote": "Fill the screen, then zoom and pan while you play. Pairs well with your phone's screen recorder.",
+    "save.title": "Save Settings",
+    "save.export": "Export",
+    "save.import": "Import",
+    "save.note": "Saves and restores the image, layers, and each layer's jiggle settings in one file.",
+    "stage.drop": "Drop an image to load",
+
+    "play.tapDrag": "Tap / Drag",
+    "play.tapStrength": "Tap strength",
+    "play.tapStrengthNote": "How hard it springs back. Lower for a light wobble, higher for a big boing. Flick away quickly for extra punch.",
+    "play.shakeAll": "Shake It All",
+    "play.joltV": "Vertical jolt",
+    "play.joltH": "Horizontal jolt",
+    "play.still": "Freeze",
+    "play.strength": "Strength",
+    "play.autoJiggle": "Auto jiggle",
+    "play.pattern": "Pattern",
+    "play.pat.v": "Vertical",
+    "play.pat.h": "Horizontal",
+    "play.pat.circle": "Circle",
+    "play.pat.circle2": "Circle (reverse)",
+    "play.pat.diag1": "Diagonal 45° (left)",
+    "play.pat.diag2": "Diagonal 45° (right)",
+    "play.pat.ripple": "Ripple",
+    "play.pat.impulseV": "Vertical pulses",
+    "play.pat.random": "Random",
+    "play.intensity": "Intensity",
+    "play.speed": "Speed",
+    "play.sensor": "Shake With Sensor",
+    "play.accel": "Motion sensor",
+    "play.sensitivity": "Sensitivity",
+    "play.sensorNote": "Shake your phone to jiggle it (permission required).",
+    "play.pad": "Shake Pad (for PC)",
+    "play.padNote": "Drag on the pad to shake the \"container\" — inertia jiggles the contents while the image itself stays put. Faster drags shake harder. No need to recenter the knob.",
+
+    "setup.layers": "Layers",
+    "setup.lAdd": "Add",
+    "setup.lDel": "Delete",
+    "setup.lRename": "Rename",
+    "setup.layerColor": "Layer/mask color",
+    "setup.layerColorNote": "Change if hard to see",
+    "setup.physTitle": "Selected Layer Physics",
+    "setup.preset": "Preset",
+    "preset.puru": "Jiggly",
+    "preset.hair": "Hair (silky)",
+    "preset.bounce": "Bouncy",
+    "preset.soft": "Soft",
+    "preset.heavy": "Heavy",
+    "setup.soft": "Softness",
+    "setup.spread": "Propagation",
+    "setup.settle": "Settling",
+    "setup.amp": "Amplitude",
+    "setup.anisoAngle": "Preferred direction",
+    "setup.anisoRatio": "Direction bias",
+    "setup.holdPreview": "Hold to preview",
+    "setup.previewActive": "This layer",
+    "setup.previewAll": "All layers",
+    "setup.maskTitle": "Area (Mask)",
+    "setup.paint": "Paint",
+    "setup.erase": "Erase",
+    "setup.ai": "AI Select",
+    "setup.brushSize": "Brush size",
+    "setup.brushHard": "Brush hardness",
+    "setup.brushDense": "Brush opacity",
+    "setup.undo": "Undo (Z)",
+    "setup.redo": "Redo (Y)",
+    "setup.showArea": "Show area",
+    "setup.clearArea": "Clear this layer's area",
+    "setup.maskOpacity": "Overlay opacity",
+    "setup.aiTitle": "AI Select Settings",
+    "setup.aiNote": "Tap or trace what you want to jiggle and it becomes the area.",
+    "setup.aiStatus": "Preparing AI… (a few MB, first time only)",
+    "setup.aiReload": "Reload AI",
+    "setup.aiAdd": "Add to selection",
+    "setup.aiAddNote": "ON to select multiple things. OFF to re-pick just one.",
+    "setup.aiSpread": "Spread",
+    "setup.aiSpreadNote": "How far the selection spreads. Lower values pick finer areas.",
+    "layer.defaultName": "Layer",
+    "layer.namePrompt": "Layer name",
+    "layer.softChip": "sft",
+    "layer.cherry": "Cherry",
+    "layer.pudding": "Pudding",
+
+    "liq.title": "Liquid",
+    "liq.color": "Color",
+    "liq.opacity": "Opacity",
+    "liq.visc": "Thickness",
+    "liq.drip": "Drip",
+    "liq.size": "Size",
+    "liq.clear": "Clear liquid",
+    "liq.tiltTitle": "Tilt",
+    "liq.tilt": "Tilt sensor",
+    "liq.tiltNote": "Tilt your phone to change which way it flows (left/right is auto-corrected).",
+
+    "view.title": "View",
+    "view.reset": "Reset",
+    "view.note": "Wheel/pinch to zoom. Shift+drag or two fingers to pan.",
+    "rec.settings": "Recording",
+    "rec.length": "Length",
+    "rec.sec3": "3s",
+    "rec.sec5": "5s",
+    "rec.sec10": "10s",
+    "rec.crop": "Crop edges",
+    "rec.cropNote": "Trims the edges so the background doesn't peek through during big jiggles (bigger jiggle = tighter crop).",
+    "rec.wm": "Watermark",
+    "rec.wmNote": "Shows a subtle tool name in the corner. Turning it on cheers the developer up.",
+    "misc.title": "Misc",
+    "misc.haptic": "Haptics",
+    "misc.hapticNote": "Vibrates on big jiggles (supported devices only).",
+    "misc.se": "Sound",
+    "misc.seVolume": "Volume",
+    "misc.seSound": "Jiggle sound",
+    "sePreset.ahun": "Ah-hun",
+    "sePreset.boyon": "Boing",
+    "sePreset.poyon": "Poyon",
+    "sePreset.biyon": "Boiing",
+
+    "hint.play": "▶ Press to squish, release to let it boing.",
+    "hint.liquid": "▶ Tap to splash, drag to pour.",
+    "hint.setupAI": "▶ Tap or trace what you want to jiggle.",
+    "hint.setupAdd": "▶ Paint where it should jiggle (current layer).",
+    "hint.setupErase": "▶ Erase the jiggle area where you paint.",
+    "hint.imgLoaded": "▶ Image loaded. Paint the jiggle area, or let AI Select pick it for you.",
+    "hint.layerCap": "▶ Up to {n} layers.",
+    "hint.layerAdded": "▶ New layer added. Paint or AI-select its area.",
+    "hint.lastLayer": "▶ Can't delete the last layer.",
+    "hint.loadFirst": "▶ Load an image first.",
+    "hint.saved": "▶ Settings saved (purin-settings.json).",
+    "hint.badFile": "▶ Couldn't read that file.",
+    "hint.badSettings": "▶ Unsupported settings file.",
+    "hint.settingsLoaded": "▶ Settings loaded.",
+    "hint.aiPreparing": "▶ Preparing AI Select… (a few MB, first time only)",
+    "hint.aiReady": "▶ AI ready! Tap or trace what you want to jiggle.",
+    "hint.aiFailed": "▶ Couldn't load the AI (check your connection). You can still paint by hand.",
+    "hint.aiWait": "▶ The AI is still loading. Hang on a moment.",
+    "hint.aiStart": "▶ Getting AI Select ready…",
+    "hint.aiBusy": "▶ Analyzing…",
+    "hint.aiNoPick": "▶ Couldn't select that… try painting instead.",
+    "hint.aiNoHit": "▶ No luck… try raising \"Spread\" or tracing the object.",
+    "hint.aiApplied": "▶ Applied to \"{name}\"! Tweak the physics and jiggle away.",
+    "hint.aiError": "▶ Analysis error. Please try again.",
+    "hint.aiSelecting": "▶ Picking the jiggle area with AI…",
+    "hint.autoSelectedPlay": "▶ The AI picked the area — jiggle away! Fine-tune it in Setup.",
+    "hint.fullMaskApplied": "▶ Made the whole image jiggly. Narrow it down in Setup if you like.",
+    "hint.noSensor": "▶ Couldn't access the sensor.",
+    "hint.noRec": "▶ Recording isn't supported in this browser.",
+    "hint.recFail": "▶ Couldn't start recording.",
+    "hint.recording": "▶ Recording… ({s}s — press again to stop)",
+    "hint.recEmpty": "▶ The recording came out empty.",
+    "hint.recSaved": "▶ Video saved ({f}).",
+    "hint.recShared": "▶ Saved & shared!",
+
+    "phys.title": "Physics Guide",
+    "phys.helpBtnTitle": "What each slider does",
+    "phys.body": `<b>Preset</b>: One-tap combos of the sliders below. Fine-tune after picking.<br><br>
+<b>Softness</b>: How weakly it pulls back to its original shape. Higher = softer, slower, bigger sway. Lower = stiff and snappy.<br><br>
+<b>Propagation</b>: How strongly neighbors pull on each other. Higher = poking one spot ripples the whole area. Lower = only that spot jiggles.<br><br>
+<b>Settling</b>: How fast the jiggle dies down. Higher = stops quickly. Lower = keeps wobbling forever.<br><br>
+<b>Amplitude</b>: Overall jiggle size for this area. Zero = no jiggle.<br><br>
+<b>Preferred direction</b>: The angle it likes to jiggle along. 90° = vertical, 0°/180° = horizontal.<br><br>
+<b>Direction bias</b>: 1.0 = jiggles equally in all directions. Higher = jiggles mostly along the preferred direction and stiffens across it. Great for hair, hanging cloth, etc.`,
+
+    "help.title": "Help",
+    "help.imgSearch": "See it in image search",
+    "help.body": `<b>ぷりんあらも〜ど</b> (Purin à la mode) is a fluid simulator that jiggles your images and pours liquid on them. Everything runs in your browser — no image ever leaves your device.<br><br>
+<b>How to play</b>
+<ol>
+  <li>Load an image (button top-left / drag &amp; drop / paste)</li>
+  <li>In <b>Setup</b>, paint the area you want to jiggle — or let AI Select do it</li>
+  <li>In <b>Jiggle</b>, press, release, and enjoy the boing</li>
+  <li>When you're ready, hit <b>Pour</b> and drizzle some liquid on it</li>
+</ol>
+<b>The three modes</b>
+<ol>
+  <li><b>Jiggle</b>: Tap to squish, release to bounce. Also: whole-image jolts, auto jiggle, shaking your phone, and the shake pad</li>
+  <li><b>Setup</b>: Decide what jiggles and how. Areas live on layers, each with its own physics — silky hair on one layer, jiggly everything-else on another. See the [?] next to "Selected Layer Physics" for what each slider does<br>PC: B=Paint / E=Erase / X=toggle</li>
+  <li><b>Pour</b>: Tap to splash, drag to pour. Liquid drips with gravity and dries over time. On phones, tilting changes the flow</li>
+</ol>
+<b>What's a layer?</b> A set of "jiggle area + its physics". Up to 8. Upper layers win where areas overlap.<br><br>
+<b>Brush hardness &amp; opacity</b>: Hardness = how soft the edge blends (lower = fluffier rim). Opacity = the maximum strength one stroke can paint (lower = a weaker jiggle area). Lift and paint again to build it up. The same settings apply to Erase.<br><br>
+<b>AI Select</b>: Tap or trace an object and it becomes the area automatically. Downloads a small model (a few MB) on first use. Everything runs on-device; your image is never uploaded.<br><br>
+<b>Play Fullscreen</b>: Fills the screen; pinch to zoom, two fingers to pan. Switch between Jiggle and Pour with the buttons in the corner.<br><br>
+<b>Recording</b>: Hit "● Record" on the left. Records after a 3-second countdown, then lets you save or share. Length, crop, and watermark live under "Recording". For fullscreen, your phone's built-in screen recorder works great too.<br><br>
+<b>Troubleshooting</b>
+<ol>
+  <li>Shaking the phone does nothing → turn on "Motion sensor" and allow the permission prompt (iPhone asks on first use)</li>
+  <li>Choppy motion → huge images are auto-downscaled, but closing other tabs/apps can help</li>
+  <li>Recording won't save → your browser may not support it. Try fullscreen + your phone's screen recorder</li>
+  <li>No sound? → iPhones mute web audio while the silent switch is on</li>
+</ol>
+<b>What's "purin à la mode"?</b><br>
+A Japanese dessert: custard pudding dressed up with ice cream, fruit, and whipped cream.`,
+  },
+
+  "zh-Hant": {
+    "common.on": "開",
+    "common.off": "關",
+    "app.subtitle": "流體模擬器",
+    "app.ver": "流體模擬器 v3.0",
+    "app.helpTitle": "說明",
+
+    "mode.play": "搖晃",
+    "mode.setup": "設定",
+    "mode.liquid": "淋上",
+    "fs.back": "← 返回",
+    "fs.recDot": "REC",
+
+    "file.load": "載入圖片",
+    "file.loadNote": "也可以拖放或貼上圖片。",
+    "rec.btn": "● 錄影",
+    "rec.btnRecording": "■ 錄影中",
+    "rec.btnStop": "■ 停止",
+    "fs.enter": "⛶ 全螢幕遊玩",
+    "fs.enterNote": "佔滿整個畫面，邊縮放移動邊玩。跟手機的螢幕錄影很搭。",
+    "save.title": "儲存設定",
+    "save.export": "匯出",
+    "save.import": "匯入",
+    "save.note": "將圖片、圖層與各圖層的搖晃設定一起儲存／還原。",
+    "stage.drop": "拖放圖片以載入",
+
+    "play.tapDrag": "點按／拖曳",
+    "play.tapStrength": "點按力道",
+    "play.tapStrengthNote": "回彈的力道。調低是輕輕晃，調高會用力地彈。快速放開會彈得更猛。",
+    "play.shakeAll": "整體搖晃",
+    "play.joltV": "上下猛晃",
+    "play.joltH": "左右猛晃",
+    "play.still": "靜止",
+    "play.strength": "力道",
+    "play.autoJiggle": "自動搖晃",
+    "play.pattern": "模式",
+    "play.pat.v": "縱向",
+    "play.pat.h": "橫向",
+    "play.pat.circle": "繞圈",
+    "play.pat.circle2": "繞圈（反向）",
+    "play.pat.diag1": "斜45度（左）",
+    "play.pat.diag2": "斜45度（右）",
+    "play.pat.ripple": "漣漪",
+    "play.pat.impulseV": "連續縱向抖動",
+    "play.pat.random": "隨機",
+    "play.intensity": "強度",
+    "play.speed": "速度",
+    "play.sensor": "感應器搖晃",
+    "play.accel": "加速度感應器",
+    "play.sensitivity": "靈敏度",
+    "play.sensorNote": "搖手機就會跟著晃（需授權）。",
+    "play.pad": "搖晃板（電腦用）",
+    "play.padNote": "在板上拖曳，就像甩動容器：只有內容物會晃，圖片本身不動。拖越快晃越大。旋鈕不用歸位。",
+
+    "setup.layers": "圖層",
+    "setup.lAdd": "新增",
+    "setup.lDel": "刪除",
+    "setup.lRename": "命名",
+    "setup.layerColor": "圖層／遮罩顏色",
+    "setup.layerColorNote": "看不清楚時可更換",
+    "setup.physTitle": "所選圖層的物理",
+    "setup.preset": "預設組合",
+    "preset.puru": "Q彈",
+    "preset.hair": "頭髮（柔順）",
+    "preset.bounce": "彈跳",
+    "preset.soft": "柔軟",
+    "preset.heavy": "沉重",
+    "setup.soft": "柔軟度",
+    "setup.spread": "搖晃傳遞",
+    "setup.settle": "平息速度",
+    "setup.amp": "幅度",
+    "setup.anisoAngle": "易晃方向",
+    "setup.anisoRatio": "方向偏重",
+    "setup.holdPreview": "按住時試搖",
+    "setup.previewActive": "所選圖層",
+    "setup.previewAll": "全部圖層",
+    "setup.maskTitle": "範圍（遮罩）",
+    "setup.paint": "塗抹",
+    "setup.erase": "擦除",
+    "setup.ai": "自動選取",
+    "setup.brushSize": "筆刷大小",
+    "setup.brushHard": "筆刷硬度",
+    "setup.brushDense": "筆刷濃度",
+    "setup.undo": "復原(Z)",
+    "setup.redo": "重做(Y)",
+    "setup.showArea": "顯示範圍",
+    "setup.clearArea": "清除此圖層的範圍",
+    "setup.maskOpacity": "遮罩濃度",
+    "setup.aiTitle": "自動選取設定",
+    "setup.aiNote": "點按或描一下想搖的東西，就會自動變成範圍。",
+    "setup.aiStatus": "正在準備 AI…（僅首次需下載數 MB）",
+    "setup.aiReload": "重新準備 AI",
+    "setup.aiAdd": "加選範圍",
+    "setup.aiAddNote": "要選多個就開；只想重選一處就關。",
+    "setup.aiSpread": "擴展",
+    "setup.aiSpreadNote": "自動選取範圍的大小。數值小可以選得更精細。",
+    "layer.defaultName": "圖層",
+    "layer.namePrompt": "圖層名稱",
+    "layer.softChip": "軟",
+    "layer.cherry": "櫻桃",
+    "layer.pudding": "布丁",
+
+    "liq.title": "液體設定",
+    "liq.color": "顏色",
+    "liq.opacity": "濃度",
+    "liq.visc": "稠度",
+    "liq.drip": "垂流強度",
+    "liq.size": "大小",
+    "liq.clear": "清除液體",
+    "liq.tiltTitle": "傾斜反應",
+    "liq.tilt": "傾斜感應器",
+    "liq.tiltNote": "傾斜手機就能改變流向（左右方向會自動校正）。",
+
+    "view.title": "顯示",
+    "view.reset": "重設",
+    "view.note": "滾輪／雙指縮放。Shift+拖曳或雙指移動。",
+    "rec.settings": "錄影設定",
+    "rec.length": "長度",
+    "rec.sec3": "3秒",
+    "rec.sec5": "5秒",
+    "rec.sec10": "10秒",
+    "rec.crop": "裁切邊緣",
+    "rec.cropNote": "裁掉圖片邊緣，避免大幅搖晃時露出背景（晃越大裁越多）。",
+    "rec.wm": "浮水印",
+    "rec.wmNote": "開啟後右下角會低調顯示工具名稱。願意打開的話，作者會很受鼓勵。",
+    "misc.title": "其他",
+    "misc.haptic": "震動",
+    "misc.hapticNote": "搖晃劇烈的瞬間手機會震動（限支援的裝置）。",
+    "misc.se": "音效",
+    "misc.seVolume": "音量",
+    "misc.seSound": "搖晃音",
+    "sePreset.ahun": "啊哼",
+    "sePreset.boyon": "彈跳",
+    "sePreset.poyon": "軟彈",
+    "sePreset.biyon": "彈簧",
+
+    "hint.play": "▶ 按下去壓扁，放開就Q彈。",
+    "hint.liquid": "▶ 點按淋上液體，拖曳倒出。",
+    "hint.setupAI": "▶ 點按或描一下想搖的東西。",
+    "hint.setupAdd": "▶ 塗到的地方會變成搖晃範圍（目前圖層）。",
+    "hint.setupErase": "▶ 塗到的地方會取消搖晃範圍。",
+    "hint.imgLoaded": "▶ 圖片載入完成。用「塗抹」指定範圍，或交給自動選取。",
+    "hint.layerCap": "▶ 圖層最多 {n} 層。",
+    "hint.layerAdded": "▶ 已新增圖層。用「塗抹」或自動選取決定範圍。",
+    "hint.lastLayer": "▶ 最後一層不能刪除。",
+    "hint.loadFirst": "▶ 請先載入圖片。",
+    "hint.saved": "▶ 設定已儲存（purin-settings.json）。",
+    "hint.badFile": "▶ 無法讀取這個檔案。",
+    "hint.badSettings": "▶ 不支援的設定檔。",
+    "hint.settingsLoaded": "▶ 設定已載入。",
+    "hint.aiPreparing": "▶ 自動選取準備中…（僅首次需數 MB）",
+    "hint.aiReady": "▶ AI 準備完成！點按或描一下想搖的東西。",
+    "hint.aiFailed": "▶ AI 載入失敗（請確認網路）。也可以用筆刷塗。",
+    "hint.aiWait": "▶ AI 準備中，請稍候。",
+    "hint.aiStart": "▶ 開始準備自動選取…",
+    "hint.aiBusy": "▶ 分析中…",
+    "hint.aiNoPick": "▶ 選不到…請改用筆刷塗。",
+    "hint.aiNoHit": "▶ 沒選好…把「擴展」調高，或描一下目標。",
+    "hint.aiApplied": "▶ 已套用到「{name}」！調整物理來搖搖看。",
+    "hint.aiError": "▶ 分析錯誤，請再試一次。",
+    "hint.aiSelecting": "▶ AI 正在挑選搖晃範圍…",
+    "hint.autoSelectedPlay": "▶ AI 已選好範圍，直接搖吧！要調整請到「設定」。",
+    "hint.fullMaskApplied": "▶ 已讓整張圖都能搖。想縮小範圍請到「設定」。",
+    "hint.noSensor": "▶ 無法使用感應器。",
+    "hint.noRec": "▶ 這個環境不支援錄影。",
+    "hint.recFail": "▶ 無法開始錄影。",
+    "hint.recording": "▶ 錄影中…（{s} 秒／再按一次停止）",
+    "hint.recEmpty": "▶ 錄影資料是空的。",
+    "hint.recSaved": "▶ 影片已儲存（{f}）。",
+    "hint.recShared": "▶ 已儲存並分享！",
+
+    "phys.title": "物理說明",
+    "phys.helpBtnTitle": "各項目說明",
+    "phys.body": `<b>預設組合</b>：一鍵套用下方各滑桿的代表性組合，套用後仍可微調。<br><br>
+<b>柔軟度</b>：回復原形的力量有多弱。越高越柔軟，晃得又慢又大；越低越硬，回彈俐落。<br><br>
+<b>搖晃傳遞</b>：相鄰部分互相拉扯的強度。調高時戳一處會帶動整片波動；調低則只晃該處。<br><br>
+<b>平息速度</b>：搖晃靜止的快慢。調高很快停下；調低會一直晃個不停。<br><br>
+<b>幅度</b>：這個範圍整體的搖晃大小。0 就不會晃。<br><br>
+<b>易晃方向</b>：容易搖晃的方向角度。90° 為縱向，0°/180° 為橫向。<br><br>
+<b>方向偏重</b>：1.0 為各方向均等。越高越只沿「易晃方向」搖，垂直方向變硬。適合頭髮、垂布等。`,
+
+    "help.title": "說明",
+    "help.imgSearch": "用圖片搜尋查看",
+    "help.body": `<b>ぷりんあらも〜ど</b>（布丁百匯）是一款把圖片搖得Q彈、還能淋上液體的流體模擬器。全部都在瀏覽器內運作——圖片不會被傳送到任何地方。<br><br>
+<b>玩法流程</b>
+<ol>
+  <li>載入圖片（左上按鈕／拖放／貼上）</li>
+  <li>在「設定」裡塗出想搖的範圍——也可以交給自動選取</li>
+  <li>在「搖晃」裡按下、放開，享受Q彈</li>
+  <li>盡興後按「淋上」，淋點液體上去</li>
+</ol>
+<b>三種模式</b>
+<ol>
+  <li><b>搖晃</b>：點按壓扁，放開回彈。還有整體猛晃、自動搖晃、搖手機、以及搖晃板</li>
+  <li><b>設定</b>：決定哪裡會搖、怎麼搖。範圍分佈在圖層上，每層有各自的物理——一層柔順頭髮，另一層Q彈的其他部分。各滑桿的意義請看「所選圖層的物理」旁的[?]<br>電腦: B=塗抹 / E=擦除 / X=切換</li>
+  <li><b>淋上</b>：點按潑上、拖曳倒出。液體會隨重力垂流並逐漸乾掉。手機傾斜會改變流向</li>
+</ol>
+<b>圖層是什麼？</b> 就是「搖晃範圍＋其物理」的一組設定。最多 8 層。範圍重疊時由上層優先。<br><br>
+<b>筆刷硬度與濃度</b>：硬度＝邊界的融合程度（越低邊緣越柔）。濃度＝一筆能塗出的力道上限（越低搖晃範圍越弱）。放開再重塗會逐漸變濃。「擦除」也套用相同設定。<br><br>
+<b>自動選取（AI）</b>：點按或描一下物件，就會自動變成範圍。首次使用會下載小型模型（數 MB）。全部在裝置內完成，圖片不會被上傳。<br><br>
+<b>全螢幕遊玩</b>：佔滿畫面，用雙指縮放、雙指移動。用角落按鈕切換「搖晃」與「淋上」。<br><br>
+<b>錄影</b>：按左邊「● 錄影」。倒數 3 秒後開始錄，結束後可儲存或分享。長度、裁切、浮水印在「錄影設定」裡。全螢幕也很推薦用手機內建的螢幕錄影來拍。<br><br>
+<b>遇到問題時</b>
+<ol>
+  <li>搖手機沒反應 → 開啟「加速度感應器」並在權限對話框允許（iPhone 首次會詢問）</li>
+  <li>動作卡頓 → 過大的圖片會自動縮小，但關掉其他分頁或 App 可能有幫助</li>
+  <li>錄影無法儲存 → 你的瀏覽器可能不支援。請試試全螢幕＋手機的螢幕錄影</li>
+  <li>沒有聲音 → iPhone 靜音模式下不會播放音效（系統限制）</li>
+</ol>
+<b>「布丁百匯（プリンアラモード）」是什麼？</b><br>
+一種源自日本的甜點：在布丁上加冰淇淋、水果與鮮奶油的豪華版。`,
+  },
+
+  "zh-Hans": {
+    "common.on": "开",
+    "common.off": "关",
+    "app.subtitle": "流体模拟器",
+    "app.ver": "流体模拟器 v3.0",
+    "app.helpTitle": "帮助",
+
+    "mode.play": "摇晃",
+    "mode.setup": "设置",
+    "mode.liquid": "浇上",
+    "fs.back": "← 返回",
+    "fs.recDot": "REC",
+
+    "file.load": "加载图片",
+    "file.loadNote": "也可以拖放或粘贴图片。",
+    "rec.btn": "● 录制",
+    "rec.btnRecording": "■ 录制中",
+    "rec.btnStop": "■ 停止",
+    "fs.enter": "⛶ 全屏玩",
+    "fs.enterNote": "占满整个屏幕，边缩放移动边玩。和手机的屏幕录制很搭。",
+    "save.title": "保存设置",
+    "save.export": "导出",
+    "save.import": "导入",
+    "save.note": "将图片、图层和各图层的摇晃设置一起保存／恢复。",
+    "stage.drop": "拖放图片以加载",
+
+    "play.tapDrag": "点按／拖动",
+    "play.tapStrength": "点按力度",
+    "play.tapStrengthNote": "回弹的力度。调低轻轻晃，调高会使劲地弹。快速松开弹得更猛。",
+    "play.shakeAll": "整体摇晃",
+    "play.joltV": "上下猛晃",
+    "play.joltH": "左右猛晃",
+    "play.still": "静止",
+    "play.strength": "力度",
+    "play.autoJiggle": "自动摇晃",
+    "play.pattern": "模式",
+    "play.pat.v": "纵向",
+    "play.pat.h": "横向",
+    "play.pat.circle": "绕圈",
+    "play.pat.circle2": "绕圈（反向）",
+    "play.pat.diag1": "斜45度（左）",
+    "play.pat.diag2": "斜45度（右）",
+    "play.pat.ripple": "涟漪",
+    "play.pat.impulseV": "连续纵向抖动",
+    "play.pat.random": "随机",
+    "play.intensity": "强度",
+    "play.speed": "速度",
+    "play.sensor": "传感器摇晃",
+    "play.accel": "加速度传感器",
+    "play.sensitivity": "灵敏度",
+    "play.sensorNote": "摇手机就会跟着晃（需授权）。",
+    "play.pad": "摇晃板（电脑用）",
+    "play.padNote": "在板上拖动，就像甩容器：只有内容物会晃，图片本身不动。拖得越快晃得越厉害。旋钮不用归位。",
+
+    "setup.layers": "图层",
+    "setup.lAdd": "添加",
+    "setup.lDel": "删除",
+    "setup.lRename": "命名",
+    "setup.layerColor": "图层／蒙版颜色",
+    "setup.layerColorNote": "看不清时可更换",
+    "setup.physTitle": "所选图层的物理",
+    "setup.preset": "预设",
+    "preset.puru": "Q弹",
+    "preset.hair": "头发（柔顺）",
+    "preset.bounce": "弹跳",
+    "preset.soft": "柔软",
+    "preset.heavy": "沉重",
+    "setup.soft": "柔软度",
+    "setup.spread": "摇晃传递",
+    "setup.settle": "平息速度",
+    "setup.amp": "幅度",
+    "setup.anisoAngle": "易晃方向",
+    "setup.anisoRatio": "方向偏重",
+    "setup.holdPreview": "按住时试摇",
+    "setup.previewActive": "所选图层",
+    "setup.previewAll": "全部图层",
+    "setup.maskTitle": "范围（蒙版）",
+    "setup.paint": "涂抹",
+    "setup.erase": "擦除",
+    "setup.ai": "自动选取",
+    "setup.brushSize": "画笔大小",
+    "setup.brushHard": "画笔硬度",
+    "setup.brushDense": "画笔浓度",
+    "setup.undo": "撤销(Z)",
+    "setup.redo": "重做(Y)",
+    "setup.showArea": "显示范围",
+    "setup.clearArea": "清除该图层的范围",
+    "setup.maskOpacity": "蒙版浓度",
+    "setup.aiTitle": "自动选取设置",
+    "setup.aiNote": "点按或描一下想摇的东西，就会自动变成范围。",
+    "setup.aiStatus": "正在准备 AI…（仅首次需下载几 MB）",
+    "setup.aiReload": "重新准备 AI",
+    "setup.aiAdd": "加选范围",
+    "setup.aiAddNote": "要选多个就开；只想重选一处就关。",
+    "setup.aiSpread": "扩展",
+    "setup.aiSpreadNote": "自动选取范围的大小。数值小可以选得更精细。",
+    "layer.defaultName": "图层",
+    "layer.namePrompt": "图层名称",
+    "layer.softChip": "软",
+    "layer.cherry": "樱桃",
+    "layer.pudding": "布丁",
+
+    "liq.title": "液体设置",
+    "liq.color": "颜色",
+    "liq.opacity": "浓度",
+    "liq.visc": "稠度",
+    "liq.drip": "垂流强度",
+    "liq.size": "大小",
+    "liq.clear": "清除液体",
+    "liq.tiltTitle": "倾斜反应",
+    "liq.tilt": "倾斜传感器",
+    "liq.tiltNote": "倾斜手机就能改变流向（左右方向会自动校正）。",
+
+    "view.title": "显示",
+    "view.reset": "重置",
+    "view.note": "滚轮／双指缩放。Shift+拖动或双指移动。",
+    "rec.settings": "录制设置",
+    "rec.length": "时长",
+    "rec.sec3": "3秒",
+    "rec.sec5": "5秒",
+    "rec.sec10": "10秒",
+    "rec.crop": "裁剪边缘",
+    "rec.cropNote": "裁掉图片边缘，避免大幅摇晃时露出背景（晃得越大裁得越多）。",
+    "rec.wm": "水印",
+    "rec.wmNote": "开启后右下角会低调显示工具名称。愿意打开的话，作者会很受鼓励。",
+    "misc.title": "其他",
+    "misc.haptic": "震动",
+    "misc.hapticNote": "摇晃剧烈的瞬间手机会震动（仅支持的设备）。",
+    "misc.se": "音效",
+    "misc.seVolume": "音量",
+    "misc.seSound": "摇晃音",
+    "sePreset.ahun": "啊哼",
+    "sePreset.boyon": "弹跳",
+    "sePreset.poyon": "软弹",
+    "sePreset.biyon": "弹簧",
+
+    "hint.play": "▶ 按下去压扁，松开就“duang”地弹。",
+    "hint.liquid": "▶ 点按浇上液体，拖动倒出。",
+    "hint.setupAI": "▶ 点按或描一下想摇的东西。",
+    "hint.setupAdd": "▶ 涂到的地方会变成摇晃范围（当前图层）。",
+    "hint.setupErase": "▶ 涂到的地方会取消摇晃范围。",
+    "hint.imgLoaded": "▶ 图片加载完成。用“涂抹”指定范围，或交给自动选取。",
+    "hint.layerCap": "▶ 图层最多 {n} 层。",
+    "hint.layerAdded": "▶ 已添加图层。用“涂抹”或自动选取决定范围。",
+    "hint.lastLayer": "▶ 最后一层不能删除。",
+    "hint.loadFirst": "▶ 请先加载图片。",
+    "hint.saved": "▶ 设置已保存（purin-settings.json）。",
+    "hint.badFile": "▶ 无法读取这个文件。",
+    "hint.badSettings": "▶ 不支持的设置文件。",
+    "hint.settingsLoaded": "▶ 设置已加载。",
+    "hint.aiPreparing": "▶ 自动选取准备中…（仅首次需几 MB）",
+    "hint.aiReady": "▶ AI 准备完成！点按或描一下想摇的东西。",
+    "hint.aiFailed": "▶ AI 加载失败（请检查网络）。也可以用画笔涂。",
+    "hint.aiWait": "▶ AI 准备中，请稍候。",
+    "hint.aiStart": "▶ 开始准备自动选取…",
+    "hint.aiBusy": "▶ 分析中…",
+    "hint.aiNoPick": "▶ 没选中…请改用画笔涂。",
+    "hint.aiNoHit": "▶ 没选好…把“扩展”调高，或描一下目标。",
+    "hint.aiApplied": "▶ 已应用到“{name}”！调整物理来摇摇看。",
+    "hint.aiError": "▶ 分析出错，请再试一次。",
+    "hint.aiSelecting": "▶ AI 正在挑选摇晃范围…",
+    "hint.autoSelectedPlay": "▶ AI 已选好范围，直接摇吧！要调整请到“设置”。",
+    "hint.fullMaskApplied": "▶ 已让整张图都能摇。想缩小范围请到“设置”。",
+    "hint.noSensor": "▶ 无法使用传感器。",
+    "hint.noRec": "▶ 当前环境不支持录制。",
+    "hint.recFail": "▶ 无法开始录制。",
+    "hint.recording": "▶ 录制中…（{s} 秒／再按一次停止）",
+    "hint.recEmpty": "▶ 录制数据是空的。",
+    "hint.recSaved": "▶ 视频已保存（{f}）。",
+    "hint.recShared": "▶ 已保存并分享！",
+
+    "phys.title": "物理说明",
+    "phys.helpBtnTitle": "各项说明",
+    "phys.body": `<b>预设</b>：一键应用下方各滑块的代表性组合，应用后仍可微调。<br><br>
+<b>柔软度</b>：恢复原形的力量有多弱。越高越柔软，晃得又慢又大；越低越硬，回弹利落。<br><br>
+<b>摇晃传递</b>：相邻部分互相拉扯的强度。调高时戳一处会带动整片波动；调低则只晃该处。<br><br>
+<b>平息速度</b>：摇晃平息的快慢。调高很快停下；调低会一直晃个不停。<br><br>
+<b>幅度</b>：这个范围整体的摇晃大小。0 就不会晃。<br><br>
+<b>易晃方向</b>：容易摇晃的方向角度。90° 为纵向，0°/180° 为横向。<br><br>
+<b>方向偏重</b>：1.0 为各方向均等。越高越只沿“易晃方向”摇，垂直方向变硬。适合头发、垂布等。`,
+
+    "help.title": "帮助",
+    "help.imgSearch": "用图片搜索查看",
+    "help.body": `<b>ぷりんあらも〜ど</b>（布丁百汇）是一款把图片摇得Q弹、还能浇上液体的流体模拟器。全部都在浏览器内运行——图片不会被发送到任何地方。<br><br>
+<b>玩法流程</b>
+<ol>
+  <li>加载图片（左上按钮／拖放／粘贴）</li>
+  <li>在“设置”里涂出想摇的范围——也可以交给自动选取</li>
+  <li>在“摇晃”里按下、松开，享受Q弹</li>
+  <li>尽兴后按“浇上”，浇点液体上去</li>
+</ol>
+<b>三种模式</b>
+<ol>
+  <li><b>摇晃</b>：点按压扁，松开回弹。还有整体猛晃、自动摇晃、摇手机、以及摇晃板</li>
+  <li><b>设置</b>：决定哪里会摇、怎么摇。范围分布在图层上，每层有各自的物理——一层柔顺头发，另一层Q弹的其他部分。各滑块的意义请看“所选图层的物理”旁的[?]<br>电脑: B=涂抹 / E=擦除 / X=切换</li>
+  <li><b>浇上</b>：点按泼上、拖动倒出。液体会随重力垂流并逐渐变干。手机倾斜会改变流向</li>
+</ol>
+<b>图层是什么？</b> 就是“摇晃范围＋其物理”的一组设置。最多 8 层。范围重叠时由上层优先。<br><br>
+<b>画笔硬度与浓度</b>：硬度＝边界的融合程度（越低边缘越柔）。浓度＝一笔能涂出的力度上限（越低摇晃范围越弱）。松开再重涂会逐渐变浓。“擦除”也套用相同设置。<br><br>
+<b>自动选取（AI）</b>：点按或描一下物体，就会自动变成范围。首次使用会下载小型模型（几 MB）。全部在设备内完成，图片不会被上传。<br><br>
+<b>全屏玩</b>：占满画面，用双指缩放、双指移动。用角落按钮切换“摇晃”与“浇上”。<br><br>
+<b>录制</b>：按左边“● 录制”。倒数 3 秒后开始录，结束后可保存或分享。时长、裁剪、水印在“录制设置”里。全屏也很推荐用手机内置的屏幕录制来拍。<br><br>
+<b>遇到问题时</b>
+<ol>
+  <li>摇手机没反应 → 开启“加速度传感器”并在权限对话框允许（iPhone 首次会询问）</li>
+  <li>动作卡顿 → 过大的图片会自动缩小，但关掉其他标签页或 App 可能有帮助</li>
+  <li>录制无法保存 → 你的浏览器可能不支持。请试试全屏＋手机的屏幕录制</li>
+  <li>没有声音 → iPhone 静音模式下不会播放音效（系统限制）</li>
+</ol>
+<b>“布丁百汇（プリンアラモード）”是什么？</b><br>
+一种源自日本的甜点：在布丁上加冰淇淋、水果与鲜奶油的豪华版。`,
+  },
+
+  "ko": {
+    "common.on": "켬",
+    "common.off": "끔",
+    "app.subtitle": "유체 시뮬레이터",
+    "app.ver": "유체 시뮬레이터 v3.0",
+    "app.helpTitle": "도움말",
+
+    "mode.play": "흔들기",
+    "mode.setup": "설정",
+    "mode.liquid": "붓기",
+    "fs.back": "← 뒤로",
+    "fs.recDot": "REC",
+
+    "file.load": "이미지 불러오기",
+    "file.loadNote": "드래그 앤 드롭이나 붙여넣기로도 불러올 수 있어요.",
+    "rec.btn": "● 녹화",
+    "rec.btnRecording": "■ 녹화 중",
+    "rec.btnStop": "■ 정지",
+    "fs.enter": "⛶ 전체 화면으로 놀기",
+    "fs.enterNote": "화면 가득 채워 확대·이동하며 만질 수 있어요. 휴대폰 화면 녹화와 궁합이 좋아요.",
+    "save.title": "설정 저장",
+    "save.export": "내보내기",
+    "save.import": "가져오기",
+    "save.note": "이미지·레이어·각 레이어의 흔들림 설정을 한 파일로 저장/복원해요.",
+    "stage.drop": "이미지를 끌어다 놓아 불러오기",
+
+    "play.tapDrag": "탭 / 드래그",
+    "play.tapStrength": "탭 세기",
+    "play.tapStrengthNote": "튕기는 세기. 낮추면 살짝 찰랑, 높이면 크게 탱글 튕겨요. 빠르게 떼면 더 세게 튕겨요.",
+    "play.shakeAll": "전체 흔들기",
+    "play.joltV": "세로 출렁",
+    "play.joltH": "가로 출렁",
+    "play.still": "정지",
+    "play.strength": "세기",
+    "play.autoJiggle": "자동 흔들림",
+    "play.pattern": "패턴",
+    "play.pat.v": "세로",
+    "play.pat.h": "가로",
+    "play.pat.circle": "원",
+    "play.pat.circle2": "원(역방향)",
+    "play.pat.diag1": "대각선 45°(왼쪽)",
+    "play.pat.diag2": "대각선 45°(오른쪽)",
+    "play.pat.ripple": "물결",
+    "play.pat.impulseV": "연속 세로 출렁",
+    "play.pat.random": "랜덤",
+    "play.intensity": "강도",
+    "play.speed": "속도",
+    "play.sensor": "센서로 흔들기",
+    "play.accel": "가속도 센서",
+    "play.sensitivity": "감도",
+    "play.sensorNote": "휴대폰을 흔들면 같이 흔들려요(권한 필요).",
+    "play.pad": "흔들기 패드(PC용)",
+    "play.padNote": "패드에서 드래그하면 그릇을 흔드는 관성으로 내용물만 출렁여요(이미지 자체는 안 움직임). 빠를수록 세게 흔들려요. 노브는 되돌리지 않아도 돼요.",
+
+    "setup.layers": "레이어",
+    "setup.lAdd": "추가",
+    "setup.lDel": "삭제",
+    "setup.lRename": "이름",
+    "setup.layerColor": "레이어·마스크 색",
+    "setup.layerColorNote": "잘 안 보이면 바꾸세요",
+    "setup.physTitle": "선택한 레이어의 물리",
+    "setup.preset": "프리셋",
+    "preset.puru": "탱글탱글",
+    "preset.hair": "머리카락(찰랑)",
+    "preset.bounce": "통통",
+    "preset.soft": "부드러움",
+    "preset.heavy": "묵직함",
+    "setup.soft": "말랑함",
+    "setup.spread": "흔들림 전파",
+    "setup.settle": "잦아들기",
+    "setup.amp": "진폭",
+    "setup.anisoAngle": "잘 흔들리는 방향",
+    "setup.anisoRatio": "방향 편중",
+    "setup.holdPreview": "누르는 동안 흔들기",
+    "setup.previewActive": "이 레이어",
+    "setup.previewAll": "모든 레이어",
+    "setup.maskTitle": "범위(마스크)",
+    "setup.paint": "칠하기",
+    "setup.erase": "지우기",
+    "setup.ai": "자동 선택",
+    "setup.brushSize": "브러시 크기",
+    "setup.brushHard": "브러시 경도",
+    "setup.brushDense": "브러시 농도",
+    "setup.undo": "되돌리기(Z)",
+    "setup.redo": "다시 실행(Y)",
+    "setup.showArea": "범위 표시",
+    "setup.clearArea": "이 레이어의 범위 지우기",
+    "setup.maskOpacity": "마스크 농도",
+    "setup.aiTitle": "자동 선택 설정",
+    "setup.aiNote": "흔들고 싶은 것을 탭하거나 따라 그리면 자동으로 범위가 돼요.",
+    "setup.aiStatus": "AI 준비 중… (처음 한 번만 몇 MB 다운로드)",
+    "setup.aiReload": "AI 다시 준비",
+    "setup.aiAdd": "범위 추가",
+    "setup.aiAddNote": "여러 개 선택할 땐 켬, 한 곳만 다시 고를 땐 끔.",
+    "setup.aiSpread": "퍼짐",
+    "setup.aiSpreadNote": "자동 선택 범위의 넓이. 낮추면 더 세밀하게 선택돼요.",
+    "layer.defaultName": "레이어",
+    "layer.namePrompt": "레이어 이름",
+    "layer.softChip": "말랑",
+    "layer.cherry": "체리",
+    "layer.pudding": "푸딩",
+
+    "liq.title": "액체 설정",
+    "liq.color": "색",
+    "liq.opacity": "농도",
+    "liq.visc": "점도",
+    "liq.drip": "흘러내림",
+    "liq.size": "크기",
+    "liq.clear": "액체 지우기",
+    "liq.tiltTitle": "기울기 반응",
+    "liq.tilt": "기울기 센서",
+    "liq.tiltNote": "휴대폰을 기울이면 흐르는 방향이 바뀌어요(좌우 부호는 자동 보정).",
+
+    "view.title": "보기",
+    "view.reset": "리셋",
+    "view.note": "휠/핀치로 확대·축소. Shift+드래그나 두 손가락으로 이동.",
+    "rec.settings": "녹화 설정",
+    "rec.length": "길이",
+    "rec.sec3": "3초",
+    "rec.sec5": "5초",
+    "rec.sec10": "10초",
+    "rec.crop": "가장자리 자르기",
+    "rec.cropNote": "크게 흔들릴 때 배경이 비치지 않게 가장자리를 잘라내요(흔들림이 클수록 안쪽만 보여요).",
+    "rec.wm": "워터마크",
+    "rec.wmNote": "켜면 오른쪽 아래에 툴 이름이 은은하게 표시돼요. 켜 주시면 개발에 큰 힘이 됩니다.",
+    "misc.title": "기타",
+    "misc.haptic": "진동",
+    "misc.hapticNote": "크게 출렁이는 순간 휴대폰이 진동해요(지원 기기만).",
+    "misc.se": "효과음",
+    "misc.seVolume": "음량",
+    "misc.seSound": "흔들기 소리",
+    "sePreset.ahun": "아훈",
+    "sePreset.boyon": "보잉",
+    "sePreset.poyon": "포용",
+    "sePreset.biyon": "비요옹",
+
+    "hint.play": "▶ 눌러서 찌부, 떼면 탱글 튕겨요.",
+    "hint.liquid": "▶ 탭하면 액체가 끼얹어지고, 드래그하면 부어져요.",
+    "hint.setupAI": "▶ 흔들고 싶은 것을 탭하거나 따라 그리세요.",
+    "hint.setupAdd": "▶ 칠한 곳이 흔들리는 범위가 돼요(현재 레이어).",
+    "hint.setupErase": "▶ 칠한 곳의 흔들림 범위를 지워요.",
+    "hint.imgLoaded": "▶ 이미지를 불러왔어요. '칠하기'로 범위를 정하거나 자동 선택에 맡겨 보세요.",
+    "hint.layerCap": "▶ 레이어는 최대 {n}장까지예요.",
+    "hint.layerAdded": "▶ 새 레이어 추가. '칠하기'나 자동 선택으로 범위를 정하세요.",
+    "hint.lastLayer": "▶ 마지막 한 장은 지울 수 없어요.",
+    "hint.loadFirst": "▶ 먼저 이미지를 불러오세요.",
+    "hint.saved": "▶ 설정을 저장했어요 (purin-settings.json).",
+    "hint.badFile": "▶ 읽을 수 없는 파일이에요.",
+    "hint.badSettings": "▶ 지원하지 않는 설정 파일이에요.",
+    "hint.settingsLoaded": "▶ 설정을 불러왔어요.",
+    "hint.aiPreparing": "▶ 자동 선택 준비 중… (처음 한 번만 몇 MB)",
+    "hint.aiReady": "▶ AI 준비 완료! 흔들고 싶은 것을 탭하거나 따라 그리세요.",
+    "hint.aiFailed": "▶ AI 로딩 실패(네트워크 확인). 브러시로 직접 칠할 수도 있어요.",
+    "hint.aiWait": "▶ AI 준비 중이에요. 잠시만 기다려 주세요.",
+    "hint.aiStart": "▶ 자동 선택을 준비할게요…",
+    "hint.aiBusy": "▶ 분석 중…",
+    "hint.aiNoPick": "▶ 선택에 실패했어요… 브러시로 칠해 보세요.",
+    "hint.aiNoHit": "▶ 잘 안 됐어요… '퍼짐'을 올리거나 따라 그려 보세요.",
+    "hint.aiApplied": "▶ \"{name}\"에 범위 적용! 물리를 조절해서 흔들어 보세요.",
+    "hint.aiError": "▶ 분석 오류. 다시 시도해 주세요.",
+    "hint.aiSelecting": "▶ AI가 흔들 범위를 고르는 중…",
+    "hint.autoSelectedPlay": "▶ AI가 범위를 골랐어요. 바로 흔들어 보세요! 조정은 '설정'에서.",
+    "hint.fullMaskApplied": "▶ 이미지 전체가 흔들리게 했어요. 범위를 좁히려면 '설정'으로.",
+    "hint.noSensor": "▶ 센서를 사용할 수 없어요.",
+    "hint.noRec": "▶ 이 환경은 녹화를 지원하지 않아요.",
+    "hint.recFail": "▶ 녹화를 시작하지 못했어요.",
+    "hint.recording": "▶ 녹화 중… ({s}초 / 다시 누르면 정지)",
+    "hint.recEmpty": "▶ 녹화 데이터가 비었어요.",
+    "hint.recSaved": "▶ 영상을 저장했어요 ({f}).",
+    "hint.recShared": "▶ 저장하고 공유했어요!",
+
+    "phys.title": "물리 설명",
+    "phys.helpBtnTitle": "각 항목 설명",
+    "phys.body": `<b>프리셋</b>: 아래 슬라이더들의 대표 조합을 한 번에 적용해요. 적용 후에도 미세 조정 가능.<br><br>
+<b>말랑함</b>: 원래 모양으로 돌아가려는 힘의 약함. 높일수록 말랑하고 천천히 크게 출렁이고, 낮추면 단단하고 탄력 있게 돌아와요.<br><br>
+<b>흔들림 전파</b>: 이웃끼리 끌어당기는 세기. 높이면 한 곳을 건드려도 주변까지 함께 물결치고, 낮추면 그 자리만 흔들려요.<br><br>
+<b>잦아들기</b>: 흔들림이 가라앉는 속도. 높이면 금방 멈추고, 낮추면 계속 탱글탱글 남아요.<br><br>
+<b>진폭</b>: 이 범위 전체의 흔들림 크기. 0이면 흔들리지 않아요.<br><br>
+<b>잘 흔들리는 방향</b>: 잘 흔들리게 할 방향의 각도. 90°가 세로, 0°/180°가 가로.<br><br>
+<b>방향 편중</b>: 1.0이면 모든 방향 균등. 높일수록 '잘 흔들리는 방향'으로만 흔들리고 수직 방향은 단단해져요. 머리카락이나 늘어진 천 표현에 좋아요.`,
+
+    "help.title": "도움말",
+    "help.imgSearch": "이미지 검색으로 보기",
+    "help.body": `<b>ぷりんあらも〜ど</b>(푸딩 아라모드)는 이미지를 탱글탱글 흔들고 액체를 부을 수 있는 유체 시뮬레이터예요. 모두 브라우저 안에서 돌아가며, 이미지는 어디로도 전송되지 않아요.<br><br>
+<b>노는 순서</b>
+<ol>
+  <li>이미지 불러오기(왼쪽 위 버튼／드래그 앤 드롭／붙여넣기)</li>
+  <li>'설정'에서 흔들고 싶은 범위를 칠하기 — 자동 선택에 맡겨도 돼요</li>
+  <li>'흔들기'에서 누르고, 떼고, 탱글하게 튕겨 보기</li>
+  <li>충분히 놀았으면 '붓기'로 액체를 부어 보기</li>
+</ol>
+<b>세 가지 모드</b>
+<ol>
+  <li><b>흔들기</b>: 탭하면 찌부, 떼면 튕겨요. 전체 출렁, 자동 흔들림, 휴대폰 흔들기, 흔들기 패드도 있어요</li>
+  <li><b>설정</b>: 무엇이 어떻게 흔들릴지 정해요. 범위는 레이어로 나뉘고 레이어마다 물리가 달라요 — 한 레이어는 찰랑이는 머리카락, 다른 레이어는 탱글한 나머지. 각 슬라이더의 의미는 '선택한 레이어의 물리' 옆 [?]에서<br>PC: B=칠하기 / E=지우기 / X=전환</li>
+  <li><b>붓기</b>: 탭하면 끼얹고, 드래그하면 부어져요. 액체는 중력을 따라 흘러내리고 점점 말라요. 휴대폰을 기울이면 흐르는 방향이 바뀌어요</li>
+</ol>
+<b>레이어란?</b> '흔들리는 범위 + 그 물리'의 묶음이에요. 최대 8장. 범위가 겹치면 위 레이어가 우선돼요.<br><br>
+<b>브러시 경도와 농도</b>: 경도＝경계가 섞이는 정도(낮을수록 가장자리가 부드러워요). 농도＝한 번의 칠로 낼 수 있는 세기의 상한(낮을수록 약한 흔들림 범위). 뗐다가 덧칠하면 점점 진해져요. '지우기'에도 같은 설정이 적용돼요.<br><br>
+<b>자동 선택(AI)</b>: 물체를 탭하거나 따라 그리면 자동으로 범위가 돼요. 처음 한 번만 작은 모델(몇 MB)을 내려받아요. 모두 기기 안에서 처리되고 이미지는 업로드되지 않아요.<br><br>
+<b>전체 화면으로 놀기</b>: 화면을 가득 채우고 두 손가락으로 확대·이동해요. 모서리 버튼으로 '흔들기'와 '붓기'를 전환해요.<br><br>
+<b>녹화</b>: 왼쪽 '● 녹화'에서. 3초 카운트다운 뒤 녹화되고, 끝나면 저장하거나 공유할 수 있어요. 길이·자르기·워터마크는 '녹화 설정'에 있어요. 전체 화면은 휴대폰 자체 화면 녹화로 찍는 것도 추천해요.<br><br>
+<b>잘 안 될 때</b>
+<ol>
+  <li>휴대폰을 흔들어도 반응이 없어요 → '가속도 센서'를 켜고 권한 대화상자에서 허용하세요(iPhone은 처음에 물어봐요)</li>
+  <li>움직임이 뚝뚝 끊겨요 → 너무 큰 이미지는 자동으로 줄지만, 다른 탭이나 앱을 닫으면 나아질 수 있어요</li>
+  <li>녹화가 저장되지 않아요 → 브라우저가 지원하지 않을 수 있어요. 전체 화면 + 휴대폰 화면 녹화를 시도해 보세요</li>
+  <li>소리가 안 나요 → 아이폰은 무음 스위치가 켜져 있으면 효과음이 나지 않아요(기기 사양)</li>
+</ol>
+<b>'푸딩 아라모드(プリンアラモード)'란?</b><br>
+푸딩에 아이스크림·과일·생크림을 곁들인 일본식 디저트예요.`,
+  },
+};
+// 初回訪問の言語自動判定: localStorage → navigator.language（ja / ko / zh の tw,hk,mo,hant→繁体, その他 zh→簡体 / それ以外→en）
+function detectLang(){
+  // 優先順位: URL(?lang=) > localStorage > navigator.language
+  try{
+    const q = new URLSearchParams(location.search).get("lang");
+    if(q && I18N[q]) return q;            // ※共有リンク由来。localStorage には保存しない
+  }catch(_){ }
+  let saved = null;
+  try{ saved = localStorage.getItem("purin.lang"); }catch(_){ }
+  if(saved && I18N[saved]) return saved;
+  const nl = (navigator.language || "en").toLowerCase();
+  if(nl.startsWith("ja")) return "ja";
+  if(nl.startsWith("ko")) return "ko";
+  if(nl.startsWith("zh")) return /tw|hk|mo|hant/.test(nl) ? "zh-Hant" : "zh-Hans";
+  return "en";
+}
+let LANG = detectLang();
+if(!I18N[LANG]) LANG = "ja";
+// 現在言語に無いキーは ja（原文）へフォールバックし、訳し漏れを console に出す。
+// vars は {name} 形式のプレースホルダを置換する。
+function t(key, vars){
+  const dict = I18N[LANG] || {};
+  if(!(key in dict) && LANG !== "ja") console.warn("[i18n] missing:", LANG, key);
+  let s = (key in dict) ? dict[key]
+        : (I18N.en[key] !== undefined ? I18N.en[key]
+        : (I18N.ja[key] !== undefined ? I18N.ja[key] : key));
+  if(vars) for(const k in vars) s = s.split("{" + k + "}").join(vars[k]);
+  return s;
+}
+// 開発用: ja を基準に各言語の過不足キーを一覧表示する
+function checkI18n(){
+  const base = Object.keys(I18N.ja);
+  for(const lang in I18N){
+    if(lang === "ja") continue;
+    const keys = Object.keys(I18N[lang]);
+    const missing = base.filter(k => !keys.includes(k));
+    const extra = keys.filter(k => !base.includes(k));
+    console.log("[i18n]", lang, "missing:", missing, "extra:", extra);
+  }
+}
+
+// ============ 状態 ============
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl", {antialias:true, alpha:false, preserveDrawingBuffer:true});
+const GRID_COLS = 40;
+let W=0, H=0, cols=0, rows=0, nx=0, ny=0, nVerts=0, nIdx=0;
+let rest, off, vel, uvArr, indices;
+let mode = "play";            // play | setup | liquid
+let setupSub = "add";         // add | erase | ai
+let showMask = true;
+
+// ============ レイヤー ============
+const PRESETS = [
+  {key:"puru",   labelKey:"preset.puru",   params:{soft:0.65, spread:0.50, settle:0.35, amp:1.00}},
+  {key:"hair",   labelKey:"preset.hair",   params:{soft:0.85, spread:0.35, settle:0.12, amp:1.00}},
+  {key:"bounce", labelKey:"preset.bounce", params:{soft:0.90, spread:0.65, settle:0.20, amp:1.00}},
+  {key:"soft",   labelKey:"preset.soft",   params:{soft:0.80, spread:0.45, settle:0.30, amp:0.90}},
+  {key:"heavy",  labelKey:"preset.heavy",  params:{soft:0.30, spread:0.75, settle:0.60, amp:0.75}},
+];
+const LAYER_COLORS = [
+  [0.10,0.10,0.72],[0.78,0.14,0.14],[0.05,0.55,0.10],[0.82,0.46,0.00],
+  [0.50,0.10,0.66],[0.03,0.55,0.55],[0.68,0.12,0.44],[0.35,0.35,0.35],
+];
+let layers = [];
+let activeLayer = 0;
+let layerSeq = 0;
+const DEF_PHYS = {kRet:300, kCup:300, damp:9.7, amp:0};
+let bKRet, bKCup, bDamp, bAmp;
+let bAnisoCos, bAnisoSin, bAnisoRatioEff;   // 異方性: 頂点ごとの回転角cos/sinと実効比率（rebuildBlendで一度だけ計算）
+let strokeCanvas = null, strokeCtx = null;   // 現在のストローク専用バッファ（強度=不透明グレーのRチャンネル。確定はストローク終了時）
+let strokeAlphaCanvas = null, strokeAlphaCtx = null;   // 上記のαエンコード版ミラー（ライブプレビューの合成用。打った矩形だけ差分同期）
+let previewCanvas = null, previewCtx = null; // ストローク中断中のライブプレビュー合成用
+const LAYER_CAP = 8;   // メモリ安全のための実用上限（1層=W×H×4byte）
+
+// レイヤーのマスクは「W×Hのピクセルキャンバス」が唯一の元データ（信頼できる情報源）。
+// - 表示（色オーバーレイ）: 選択中レイヤーのキャンバスをGPUテクスチャへ直接アップロードし、ピクセル単位でサンプリング
+// - 物理: 頂点の静止位置でこのキャンバスをサンプリングした値を Float32Array(nVerts) にキャッシュして使う
+function makeLayer(name, presetKey, maskFill){
+  const preset = PRESETS.find(p => p.key === presetKey) || PRESETS[0];
+  const canvas2 = document.createElement("canvas");
+  canvas2.width = W; canvas2.height = H;
+  const ctx2 = canvas2.getContext("2d");
+  const mask = new Float32Array(nVerts);
+  if(maskFill){
+    ctx2.fillStyle = "#fff";
+    ctx2.fillRect(0, 0, W, H);
+    mask.fill(1);
+  }
+  const params = Object.assign({anisoAngle:90, anisoRatio:1}, preset.params);
+  return {name, canvas:canvas2, ctx:ctx2, mask, params, color:LAYER_COLORS[(layerSeq++)%LAYER_COLORS.length]};
+}
+function layerPhys(p){
+  return {kRet:300-255*p.soft, kCup:40+520*p.spread, damp:1.2+8.5*p.settle, amp:p.amp};
+}
+// 上位レイヤー優先アルファブレンドで各頂点の実効物理を合成（頂点キャッシュ値を参照。canvas読み出しはしない＝毎回O(nVerts)で軽い）
+// 異方性は「方向テンソル」(tx,ty)=(ratio-1)*(cos2θ,sin2θ) として線形合成する（角度の単純平均は循環量なので不正確になるため）。
+function rebuildBlend(){
+  const phys = layers.map(L => layerPhys(L.params));
+  const aniso = layers.map(L => {
+    const ratio = Math.max(1, L.params.anisoRatio || 1);
+    const ang = (L.params.anisoAngle || 90) * Math.PI / 180;
+    const mag = ratio - 1;
+    return {tx: mag * Math.cos(2*ang), ty: mag * Math.sin(2*ang)};
+  });
+  for(let k=0; k<nVerts; k++){
+    let rem=1, kr=0, kc=0, dp=0, am=0, atx=0, aty=0;
+    for(let i=0; i<layers.length; i++){
+      const m = layers[i].mask[k];
+      if(m <= 0) continue;
+      const w = m*rem;
+      kr += phys[i].kRet*w; kc += phys[i].kCup*w; dp += phys[i].damp*w; am += phys[i].amp*w;
+      atx += aniso[i].tx*w; aty += aniso[i].ty*w;
+      rem *= (1-m);
+      if(rem < 0.002) break;
+    }
+    kr += DEF_PHYS.kRet*rem; kc += DEF_PHYS.kCup*rem; dp += DEF_PHYS.damp*rem; am += DEF_PHYS.amp*rem;
+    bKRet[k]=kr; bKCup[k]=kc; bDamp[k]=dp; bAmp[k]=am;
+    const magT = Math.hypot(atx, aty);
+    if(magT > 1e-4){
+      const theta = Math.atan2(aty, atx) * 0.5;
+      bAnisoCos[k] = Math.cos(theta); bAnisoSin[k] = Math.sin(theta); bAnisoRatioEff[k] = 1 + magT;
+    } else {
+      bAnisoCos[k] = 1; bAnisoSin[k] = 0; bAnisoRatioEff[k] = 1;
+    }
+  }
+}
+// アクティブレイヤーのマスクキャンバスをGPUへ（描画があった時だけ呼ぶ。毎フレームは呼ばない）
+function syncActiveMaskTexture(){
+  gl.bindTexture(gl.TEXTURE_2D, maskTex);
+  const L = layers[activeLayer];
+  if(L) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, L.canvas);
+  else  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,0]));
+}
+// ダーティ矩形（rect: ピクセル座標）だけ getImageData し、その範囲に収まる頂点だけキャッシュを更新する
+// （ストローク全体で1回。補間スタンプ1個ごとには呼ばない＝重い処理を避ける）
+function syncVertexCacheFromCanvas(layer, rect){
+  const x0 = Math.max(0, Math.floor(rect.x)), y0 = Math.max(0, Math.floor(rect.y));
+  const x1 = Math.min(W, Math.ceil(rect.x + rect.w)), y1 = Math.min(H, Math.ceil(rect.y + rect.h));
+  const rw = x1 - x0, rh = y1 - y0;
+  if(rw <= 0 || rh <= 0) return;
+  const img = layer.ctx.getImageData(x0, y0, rw, rh).data;
+  const i0 = Math.max(0, Math.floor(x0 / W * cols) - 1);
+  const i1 = Math.min(cols, Math.ceil(x1 / W * cols) + 1);
+  const j0 = Math.max(0, Math.floor(y0 / H * rows) - 1);
+  const j1 = Math.min(rows, Math.ceil(y1 / H * rows) + 1);
+  for(let j = j0; j <= j1; j++){
+    for(let i = i0; i <= i1; i++){
+      const k = j*nx+i;
+      const vx = rest[k*2], vy = rest[k*2+1];
+      if(vx < x0 || vx > x1 || vy < y0 || vy > y1) continue;
+      const px = Math.min(rw-1, Math.max(0, Math.round(vx - x0)));
+      const py = Math.min(rh-1, Math.max(0, Math.round(vy - y0)));
+      layer.mask[k] = img[(py*rw+px)*4 + 3] / 255;
+    }
+  }
+}
+
+// ============ シェーダ（コア流用） ============
+const VS = `
+attribute vec2 aRest; attribute vec2 aOff; attribute vec2 aUV;
+uniform vec2 uRes; varying vec2 vUV;
+void main(){
+  vec2 p = aRest + aOff;
+  vec2 clip = (p / uRes) * 2.0 - 1.0;
+  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+  vUV = aUV;
+}`;
+const FS = `
+precision mediump float;
+uniform sampler2D uTex; uniform sampler2D uLiq; uniform sampler2D uMaskTex;
+uniform float uOverlay; uniform float uLiqOp; uniform vec2 uPx; uniform vec3 uTint; uniform float uMaskStrength;
+varying vec2 vUV;
+void main(){
+  vec4 liq = texture2D(uLiq, vUV);
+  float aR = texture2D(uLiq, vUV + vec2(uPx.x*2.0, 0.0)).a;
+  float aL = texture2D(uLiq, vUV - vec2(uPx.x*2.0, 0.0)).a;
+  float aD = texture2D(uLiq, vUV + vec2(0.0, uPx.y*2.0)).a;
+  float aU = texture2D(uLiq, vUV - vec2(0.0, uPx.y*2.0)).a;
+  vec2 n = vec2(aR - aL, aD - aU) * 4.0;
+  float body = smoothstep(0.34, 0.43, liq.a);
+  float film = smoothstep(0.06, 0.28, liq.a) * 0.35;
+  float a = max(body, film) * uLiqOp;
+  vec3 base = texture2D(uTex, vUV + n * 0.035 * a).rgb;
+  vec3 col = mix(base, liq.rgb, a * 0.85);
+  float spec = clamp(-(n.x + n.y) * 2.2, 0.0, 1.0);
+  col += spec * spec * body * uLiqOp * 0.6;
+  float edge = smoothstep(0.32, 0.55, liq.a) * (1.0 - smoothstep(0.55, 0.95, liq.a));
+  col = mix(col, col * 0.8, edge * a * 0.4);
+  float maskA = texture2D(uMaskTex, vUV).a;   // ピクセル解像度のマスクを直接サンプリング（境界の三角ノコギリを解消）
+  col = mix(col, uTint, maskA * uMaskStrength * uOverlay);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+const QVS = `attribute vec2 aP; varying vec2 vUV;
+void main(){ vUV = aP * 0.5 + 0.5; gl_Position = vec4(aP, 0.0, 1.0); }`;
+const FLOW_COMMON = `
+precision mediump float;
+uniform sampler2D uF; uniform sampler2D uW;
+uniform vec2 uPx; uniform vec2 uGrav; uniform float uRate; uniform float uStick;
+varying vec2 vUV;
+float rnd(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233))) * 43758.5453); }
+float flowable(float d, vec2 uv){
+  vec2 perp = vec2(-uGrav.y, uGrav.x);
+  float band = floor(dot(uv, perp) / (length(uPx) * 3.0));
+  float n = rnd(vec2(band, 0.0));
+  return max(0.0, d - uStick * (0.85 + 0.3 * n));
+}`;
+const FLOW_FS = FLOW_COMMON + `
+void main(){
+  vec2 upUV = vUV - uGrav * uPx;
+  vec4 c  = texture2D(uF, vUV);
+  vec4 cu = texture2D(uF, upUV);
+  float wC = texture2D(uW, vUV).a;
+  float wU = texture2D(uW, upUV).a;
+  float thickC = 0.1 + 0.9 * smoothstep(0.25, 0.85, c.a);
+  float thickU = 0.1 + 0.9 * smoothstep(0.25, 0.85, cu.a);
+  float outF = flowable(c.a, vUV) * uRate * thickC * wC;
+  float inF = (upUV.x < 0.0 || upUV.x > 1.0 || upUV.y < 0.0 || upUV.y > 1.0)
+              ? 0.0 : flowable(cu.a, upUV) * uRate * thickU * wU;
+  float na = clamp(c.a - outF + inF, 0.0, 1.0);
+  vec2 perpPx = vec2(-uGrav.y, uGrav.x) * uPx;
+  float aL2 = texture2D(uF, vUV + perpPx).a;
+  float aR2 = texture2D(uF, vUV - perpPx).a;
+  na = clamp(na + (aL2 + aR2 - 2.0 * c.a) * 0.04 * wC, 0.0, 1.0);
+  vec3 rgb = c.rgb;
+  if(inF > 0.001) rgb = mix(c.rgb, cu.rgb, clamp(inF / max(na, 0.001), 0.0, 1.0));
+  gl_FragColor = vec4(rgb, na);
+}`;
+const WET_FS = FLOW_COMMON + `
+uniform float uDecay;
+void main(){
+  vec2 upUV = vUV - uGrav * uPx;
+  vec4 c  = texture2D(uF, vUV);
+  vec4 cu = texture2D(uF, upUV);
+  float wC = texture2D(uW, vUV).a;
+  float wU = texture2D(uW, upUV).a;
+  float thickC = 0.1 + 0.9 * smoothstep(0.25, 0.85, c.a);
+  float thickU = 0.1 + 0.9 * smoothstep(0.25, 0.85, cu.a);
+  float outF = flowable(c.a, vUV) * uRate * thickC * wC;
+  float inF = (upUV.x < 0.0 || upUV.x > 1.0 || upUV.y < 0.0 || upUV.y > 1.0)
+              ? 0.0 : flowable(cu.a, upUV) * uRate * thickU * wU;
+  float na = clamp(c.a - outF + inF, 0.0, 1.0);
+  float nw = wC;
+  if(inF > 0.001) nw = mix(wC, wU, clamp(inF / max(na, 0.001), 0.0, 1.0));
+  gl_FragColor = vec4(0.0, 0.0, 0.0, nw * uDecay);
+}`;
+const WADD_FS = `
+precision mediump float;
+uniform sampler2D uW; uniform sampler2D uInj; varying vec2 vUV;
+void main(){
+  float w = texture2D(uW, vUV).a;
+  float j = texture2D(uInj, vUV).a;
+  gl_FragColor = vec4(0.0, 0.0, 0.0, max(w, step(0.002, j)));
+}`;
+const ADD_FS = `
+precision mediump float;
+uniform sampler2D uF; uniform sampler2D uInj; varying vec2 vUV;
+void main(){
+  vec4 c = texture2D(uF, vUV);
+  vec4 j = texture2D(uInj, vUV);
+  float na = clamp(c.a + j.a, 0.0, 1.0);
+  vec3 rgb = j.a > 0.001 ? mix(c.rgb, j.rgb, clamp(j.a / max(na, 0.001), 0.0, 1.0)) : c.rgb;
+  gl_FragColor = vec4(rgb, na);
+}`;
+function makeShader(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
+  return s;
+}
+function makeProg(vs, fs){
+  const p = gl.createProgram();
+  gl.attachShader(p, makeShader(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, makeShader(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p, gl.LINK_STATUS)) throw gl.getProgramInfoLog(p);
+  return p;
+}
+// ==== GLリソース（プログラム・バッファ・全テクスチャ/FBO）====
+// コンテキストロスト復帰のため生成を initGLResources() に集約し、初期化時とリストア時の両方から呼ぶ。
+let prog, flowProg, wetProg, addProg, waddProg;
+let flowLoc, wetLoc, addLoc, waddLoc, loc;
+let bufQuad, bufRest, bufOff, bufUV, bufIdx;
+let tex, field, wfield, injTex, maskTex;
+let cur = 0, wcur = 0;
+function qLoc(p, names){
+  const o = {aP: gl.getAttribLocation(p, "aP")};
+  for(const n of names) o[n] = gl.getUniformLocation(p, n);
+  return o;
+}
+function setupTex(t){
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+}
+function makePair(){
+  const pair = [
+    {tex: gl.createTexture(), fb: gl.createFramebuffer()},
+    {tex: gl.createTexture(), fb: gl.createFramebuffer()},
+  ];
+  for(const f of pair){
+    setupTex(f.tex);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, f.tex, 0);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return pair;
+}
+function initGLResources(){
+  prog     = makeProg(VS, FS);
+  flowProg = makeProg(QVS, FLOW_FS);
+  wetProg  = makeProg(QVS, WET_FS);
+  addProg  = makeProg(QVS, ADD_FS);
+  waddProg = makeProg(QVS, WADD_FS);
+  flowLoc = qLoc(flowProg, ["uF","uW","uPx","uGrav","uRate","uStick"]);
+  wetLoc  = qLoc(wetProg,  ["uF","uW","uPx","uGrav","uRate","uStick","uDecay"]);
+  addLoc  = qLoc(addProg,  ["uF","uInj"]);
+  waddLoc = qLoc(waddProg, ["uW","uInj"]);
+  bufQuad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufQuad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  gl.useProgram(prog);
+  loc = {
+    aRest: gl.getAttribLocation(prog, "aRest"), aOff: gl.getAttribLocation(prog, "aOff"),
+    aUV: gl.getAttribLocation(prog, "aUV"),
+    uRes: gl.getUniformLocation(prog, "uRes"), uOverlay: gl.getUniformLocation(prog, "uOverlay"),
+    uTex: gl.getUniformLocation(prog, "uTex"), uLiq: gl.getUniformLocation(prog, "uLiq"),
+    uMaskTex: gl.getUniformLocation(prog, "uMaskTex"), uTint: gl.getUniformLocation(prog, "uTint"),
+    uMaskStrength: gl.getUniformLocation(prog, "uMaskStrength"),
+    uLiqOp: gl.getUniformLocation(prog, "uLiqOp"), uPx: gl.getUniformLocation(prog, "uPx"),
+  };
+  gl.uniform1i(loc.uTex, 0);
+  gl.uniform1i(loc.uLiq, 1);
+  gl.uniform1i(loc.uMaskTex, 2);
+  bufRest = gl.createBuffer(); bufOff = gl.createBuffer();
+  bufUV = gl.createBuffer(); bufIdx = gl.createBuffer();
+  tex = gl.createTexture(); setupTex(tex);
+  field = makePair();
+  wfield = makePair();
+  injTex = gl.createTexture(); setupTex(injTex);
+  maskTex = gl.createTexture();   // アクティブレイヤーのピクセルマスク（W×H canvasを直接アップロード）
+  setupTex(maskTex);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+}
+initGLResources();
+// ==== コンテキストロスト/復帰 ====
+let glLost = false;
+canvas.addEventListener("webglcontextlost", e => {
+  e.preventDefault();          // これが無いと restored が来ない
+  glLost = true;               // 描画ループを停止（frame内で早期return）
+  if(recorder){ stopRec(); setHint(t("hint.recFail")); }   // 録画中なら停止して通知
+});
+canvas.addEventListener("webglcontextrestored", () => {
+  initGLResources();           // 全GLオブジェクトを作り直し
+  restoreGLState();            // CPU側（srcCanvas/各レイヤーcanvas/物理typed array）から再アップロード
+  glLost = false;
+});
+// 破棄されたGPUリソースを現在のW×H・CPUデータから復元する（液体GPU状態は消失を許容しクリア）
+function restoreGLState(){
+  if(!W) return;
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufRest); gl.bufferData(gl.ARRAY_BUFFER, rest, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufUV);   gl.bufferData(gl.ARRAY_BUFFER, uvArr, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufOff);  gl.bufferData(gl.ARRAY_BUFFER, off, gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bufIdx); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+  gl.useProgram(prog);
+  gl.uniform2f(loc.uRes, W, H); gl.uniform2f(loc.uPx, 1 / W, 1 / H);
+  for(const f of field.concat(wfield)){
+    gl.bindTexture(gl.TEXTURE_2D, f.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f.fb); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  fieldActive = false; injectDirty = false; if(liqCtx) liqCtx.clearRect(0, 0, W, H);   // 液体は諦めてクリア
+  if(srcCanvas){ gl.bindTexture(gl.TEXTURE_2D, tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas); }
+  syncActiveMaskTexture();     // アクティブレイヤーのマスクを再アップロード
+  rebuildBlend();
+}
+
+// ============ メッシュ構築 ============
+function buildMesh(w, h){
+  W = w; H = h;
+  canvas.width = W; canvas.height = H;
+  gl.viewport(0, 0, W, H);
+  cols = GRID_COLS;
+  rows = Math.max(12, Math.min(64, Math.round(cols * h / w)));
+  nx = cols + 1; ny = rows + 1; nVerts = nx * ny;
+  rest = new Float32Array(nVerts * 2);
+  off  = new Float32Array(nVerts * 2);
+  vel  = new Float32Array(nVerts * 2);
+  uvArr = new Float32Array(nVerts * 2);
+  bKRet = new Float32Array(nVerts); bKCup = new Float32Array(nVerts);
+  bDamp = new Float32Array(nVerts); bAmp = new Float32Array(nVerts);
+  bAnisoCos = new Float32Array(nVerts).fill(1);
+  bAnisoSin = new Float32Array(nVerts);
+  bAnisoRatioEff = new Float32Array(nVerts).fill(1);
+  if(!strokeCanvas){ strokeCanvas = document.createElement("canvas"); strokeCtx = strokeCanvas.getContext("2d"); }
+  strokeCanvas.width = W; strokeCanvas.height = H;
+  if(!strokeAlphaCanvas){ strokeAlphaCanvas = document.createElement("canvas"); strokeAlphaCtx = strokeAlphaCanvas.getContext("2d"); }
+  strokeAlphaCanvas.width = W; strokeAlphaCanvas.height = H;
+  if(!previewCanvas){ previewCanvas = document.createElement("canvas"); previewCtx = previewCanvas.getContext("2d"); }
+  previewCanvas.width = W; previewCanvas.height = H;
+  for(let j = 0; j < ny; j++) for(let i = 0; i < nx; i++){
+    const k = j * nx + i;
+    rest[k*2] = i / cols * W; rest[k*2+1] = j / rows * H;
+    uvArr[k*2] = i / cols; uvArr[k*2+1] = j / rows;
+  }
+  indices = new Uint16Array(cols * rows * 6);
+  let p = 0;
+  for(let j = 0; j < rows; j++) for(let i = 0; i < cols; i++){
+    const a = j*nx+i, b = a+1, c = a+nx, d = c+1;
+    indices[p++]=a; indices[p++]=c; indices[p++]=b;
+    indices[p++]=b; indices[p++]=c; indices[p++]=d;
+  }
+  nIdx = p;
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufRest); gl.bufferData(gl.ARRAY_BUFFER, rest, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufUV);   gl.bufferData(gl.ARRAY_BUFFER, uvArr, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufOff);  gl.bufferData(gl.ARRAY_BUFFER, off, gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bufIdx); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+  gl.useProgram(prog);
+  gl.uniform2f(loc.uRes, W, H);
+  gl.uniform2f(loc.uPx, 1 / W, 1 / H);
+  for(const f of field.concat(wfield)){
+    gl.bindTexture(gl.TEXTURE_2D, f.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f.fb);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  if(!liqCanvas){ liqCanvas = document.createElement("canvas"); liqCtx = liqCanvas.getContext("2d"); }
+  liqCanvas.width = W; liqCanvas.height = H;
+  injectDirty = false; filterOK = null;
+}
+
+// ============ 液体（コア流用） ============
+let liqCanvas = null, liqCtx = null, injectDirty = false, fieldActive = false;
+let gravX = 0, gravY = 1, sensorOn = false;
+let lastKX = -1e9, lastKY = -1e9;
+function runPass(p, aP, fb, setUniforms){
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.viewport(0, 0, W, H);
+  gl.useProgram(p);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufQuad);
+  gl.enableVertexAttribArray(aP);
+  gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
+  setUniforms();
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+function bindT(unit, t){ gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); }
+let activeUntil = 0;
+function injectStamps(){
+  bindT(2, injTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, liqCanvas);
+  bindT(1, field[cur].tex);
+  runPass(addProg, addLoc.aP, field[1 - cur].fb, () => { gl.uniform1i(addLoc.uF, 1); gl.uniform1i(addLoc.uInj, 2); });
+  bindT(1, wfield[wcur].tex);
+  runPass(waddProg, waddLoc.aP, wfield[1 - wcur].fb, () => { gl.uniform1i(waddLoc.uW, 1); gl.uniform1i(waddLoc.uInj, 2); });
+  cur = 1 - cur; wcur = 1 - wcur;
+  liqCtx.clearRect(0, 0, W, H);
+  injectDirty = false; fieldActive = true;
+  const tau = 0.6 + sl("lqDrip") * 3.5;
+  activeUntil = performance.now() / 1000 + tau * 6;
+}
+function flowField(){
+  if(performance.now() / 1000 > activeUntil){ fieldActive = false; return; }
+  const visc = sl("lqVisc"), strength = sl("lqDrip");
+  const rate = 0.5 - 0.38 * visc;
+  const stick = 0.02 + 0.4 * (1 - strength);
+  let gx = gravX, gy = gravY;
+  const len = Math.hypot(gx, gy);
+  if(len < 0.05){ gx = 0; gy = 1; } else { gx /= len; gy /= len; }
+  const steps = 1 + ((1 - visc) * 2 | 0);
+  const tau = 0.6 + strength * 3.5;
+  const decay = Math.exp(-(1 / 60) / tau / steps);
+  for(let s = 0; s < steps; s++){
+    bindT(1, field[cur].tex); bindT(2, wfield[wcur].tex);
+    const setCommon = L => {
+      gl.uniform1i(L.uF, 1); gl.uniform1i(L.uW, 2);
+      gl.uniform2f(L.uPx, 1 / W, 1 / H); gl.uniform2f(L.uGrav, gx, gy);
+      gl.uniform1f(L.uRate, rate); gl.uniform1f(L.uStick, stick);
+    };
+    runPass(flowProg, flowLoc.aP, field[1 - cur].fb, () => setCommon(flowLoc));
+    runPass(wetProg, wetLoc.aP, wfield[1 - wcur].fb, () => { setCommon(wetLoc); gl.uniform1f(wetLoc.uDecay, decay); });
+    cur = 1 - cur; wcur = 1 - wcur;
+  }
+}
+let spriteCache = {col:null, canvas:null};
+function spriteFor(col){
+  if(spriteCache.col === col) return spriteCache.canvas;
+  const S = 128, c = document.createElement("canvas");
+  c.width = S; c.height = S;
+  const x = c.getContext("2d");
+  const g = x.createRadialGradient(S/2, S/2, 0, S/2, S/2, S/2);
+  g.addColorStop(0, col + "ff"); g.addColorStop(0.55, col + "f2");
+  g.addColorStop(0.8, col + "66"); g.addColorStop(1, col + "00");
+  x.fillStyle = g; x.fillRect(0, 0, S, S);
+  spriteCache = {col, canvas:c};
+  return c;
+}
+function softBlob(x, y, r, col, alpha){
+  liqCtx.globalAlpha = alpha === undefined ? 1 : alpha;
+  liqCtx.drawImage(spriteFor(col), x - r, y - r, r * 2, r * 2);
+  liqCtx.globalAlpha = 1;
+}
+function irregularBlob(c, x, y, R, elongY, rot){
+  const p1 = Math.random()*6.28, p2 = Math.random()*6.28, p3 = Math.random()*6.28;
+  c.save(); c.translate(x, y); c.rotate(rot || 0); c.scale(1, elongY || 1);
+  c.beginPath();
+  const N = 36;
+  for(let i = 0; i <= N; i++){
+    const th = i / N * Math.PI * 2;
+    const r = R * (0.78 + 0.16*Math.sin(2*th+p1) + 0.11*Math.sin(3*th+p2) + 0.07*Math.sin(5*th+p3));
+    const px = Math.cos(th)*r, py = Math.sin(th)*r;
+    i === 0 ? c.moveTo(px, py) : c.lineTo(px, py);
+  }
+  c.closePath(); c.fill(); c.restore();
+}
+let filterOK = null;
+function canFilter(){
+  if(filterOK !== null) return filterOK;
+  liqCtx.filter = "blur(2px)";
+  filterOK = (liqCtx.filter === "blur(2px)");
+  liqCtx.filter = "none";
+  return filterOK;
+}
+function stamp(x, y, scale){
+  const R = sl("lqSize") * Math.min(W, H) * scale;
+  const col = document.getElementById("lqColor").value;
+  const c = liqCtx;
+  const pat = (Math.random() * 3) | 0;
+  if(!canFilter()){
+    softBlob(x, y, R * 0.9, col);
+    for(let i = 0; i < 5; i++){
+      const a = Math.random()*Math.PI*2, d = R*(0.3+Math.random()*0.45);
+      softBlob(x + Math.cos(a)*d, y + Math.sin(a)*d, R*(0.4+Math.random()*0.3), col);
+    }
+    injectDirty = true; return;
+  }
+  c.fillStyle = col;
+  c.filter = "blur(" + Math.max(1.5, R*0.1).toFixed(1) + "px)";
+  if(pat === 0){
+    irregularBlob(c, x, y, R*0.8, 1+Math.random()*0.2, Math.random()*3.14);
+  } else if(pat === 1){
+    irregularBlob(c, x, y, R*0.65, 1, Math.random()*3.14);
+    const m = 4 + (Math.random()*5|0);
+    for(let i = 0; i < m; i++){
+      const a = Math.random()*Math.PI*2, d = R*(0.75+Math.random()*0.5);
+      const bx = x+Math.cos(a)*d, by = y+Math.sin(a)*d;
+      c.save(); c.translate(bx, by); c.rotate(a); c.beginPath();
+      c.ellipse(0, 0, R*(0.1+Math.random()*0.14), R*(0.06+Math.random()*0.08), 0, 0, Math.PI*2);
+      c.fill(); c.restore();
+    }
+  } else {
+    irregularBlob(c, x, y, R*0.5, 1.9+Math.random()*0.6, (Math.random()-0.5)*0.35);
+  }
+  c.filter = "none"; injectDirty = true;
+}
+
+// ============ サンプル画像（プリン） ============
+function makePudding(){
+  const w = 720, h = 880;
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const x = c.getContext("2d");
+  x.fillStyle = "#fdf6e3"; x.fillRect(0,0,w,h);
+  x.strokeStyle = "rgba(160,90,28,.10)"; x.lineWidth = 1;
+  for(let g = 0; g < w; g += 40){ x.beginPath(); x.moveTo(g,0); x.lineTo(g,h); x.stroke(); }
+  for(let g = 0; g < h; g += 40){ x.beginPath(); x.moveTo(0,g); x.lineTo(w,g); x.stroke(); }
+  const cx = 360, topY = 330, baseY = 660, topR = 150, baseR = 235;
+  x.fillStyle = "#eef2f5"; x.beginPath(); x.ellipse(cx, 675, 305, 58, 0, 0, Math.PI*2); x.fill();
+  x.fillStyle = "#dbe3ea"; x.beginPath(); x.ellipse(cx, 668, 260, 42, 0, 0, Math.PI*2); x.fill();
+  x.fillStyle = "rgba(120,90,40,.18)"; x.beginPath(); x.ellipse(cx, baseY+8, baseR*0.98, 26, 0, 0, Math.PI*2); x.fill();
+  const body = x.createLinearGradient(0, topY, 0, baseY);
+  body.addColorStop(0, "#f8ce62"); body.addColorStop(1, "#e8a833");
+  x.fillStyle = body; x.beginPath();
+  x.moveTo(cx - topR, topY); x.lineTo(cx - baseR, baseY);
+  x.quadraticCurveTo(cx, baseY + 34, cx + baseR, baseY);
+  x.lineTo(cx + topR, topY); x.quadraticCurveTo(cx, topY - 46, cx - topR, topY); x.fill();
+  x.fillStyle = "#8a4b1f"; x.beginPath();
+  x.moveTo(cx - topR - 4, topY + 4); x.quadraticCurveTo(cx, topY - 52, cx + topR + 4, topY + 4);
+  const drips = [[-120, 96],[-58, 62],[8, 108],[74, 70],[128, 92]];
+  let px = cx + topR + 4;
+  for(const [dx, len] of drips.slice().reverse()){
+    const tx = cx + dx;
+    x.quadraticCurveTo((px+tx)/2, topY + 26, tx + 20, topY + len - 22);
+    x.quadraticCurveTo(tx, topY + len + 16, tx - 20, topY + len - 22);
+    px = tx - 20;
+  }
+  x.quadraticCurveTo((px + cx - topR)/2, topY + 26, cx - topR - 4, topY + 4); x.fill();
+  x.fillStyle = "rgba(255,255,255,.5)"; x.beginPath(); x.ellipse(cx - 92, topY + 150, 26, 88, -0.12, 0, Math.PI*2); x.fill();
+  x.strokeStyle = "#6d4020"; x.lineWidth = 6;
+  x.beginPath(); x.moveTo(cx + 8, topY - 44); x.quadraticCurveTo(cx + 34, topY - 108, cx + 58, topY - 118); x.stroke();
+  x.fillStyle = "#d0342c"; x.beginPath(); x.arc(cx + 4, topY - 34, 34, 0, Math.PI*2); x.fill();
+  x.fillStyle = "rgba(255,255,255,.55)"; x.beginPath(); x.arc(cx - 8, topY - 44, 10, 0, Math.PI*2); x.fill();
+  return {canvas:c, cx, topY, baseY, topR, baseR};
+}
+// プロシージャルな形状（円形フェザー・台形＋ドーム）はピクセル単位でも同じ式がそのまま評価できるので、
+// 頂点ではなくピクセル解像度で直接ラスタライズしてキャンバスに焼く（唯一の元データがピクセルになる新方式に合わせる）
+function puddingLayers(geo){
+  const {cx, topY, baseY, topR, baseR} = geo;
+  const cherryX = cx + 4, cherryY = topY - 34;
+  const cherry = makeLayer(t("layer.cherry"), "bounce", false);
+  const pudding = makeLayer(t("layer.pudding"), "puru", false);
+  const cImg = cherry.ctx.createImageData(W, H);
+  const pImg = pudding.ctx.createImageData(W, H);
+  for(let y = 0; y < H; y++){
+    for(let x = 0; x < W; x++){
+      const idx = (y*W+x)*4;
+      const dc = 46 - Math.hypot(x - cherryX, y - cherryY);
+      const cv = Math.max(0, Math.min(1, dc/18));
+      cImg.data[idx]=255; cImg.data[idx+1]=255; cImg.data[idx+2]=255; cImg.data[idx+3]=cv*255;
+      let d = -1e9, amp = 0;
+      if(y >= topY && y <= baseY){
+        const t = (y - topY) / (baseY - topY);
+        d = (topR + (baseR - topR) * t) - Math.abs(x - cx);
+        amp = Math.pow(1 - t, 0.65);
+      } else if(y < topY){
+        d = topR - Math.hypot(x - cx, (y - topY) * 1.6); amp = 1;
+      }
+      const pv = Math.max(0, Math.min(1, d/26)) * amp;
+      pImg.data[idx]=255; pImg.data[idx+1]=255; pImg.data[idx+2]=255; pImg.data[idx+3]=pv*255;
+    }
+  }
+  cherry.ctx.putImageData(cImg, 0, 0);
+  pudding.ctx.putImageData(pImg, 0, 0);
+  syncVertexCacheFromCanvas(cherry, {x:0, y:0, w:W, h:H});
+  syncVertexCacheFromCanvas(pudding, {x:0, y:0, w:W, h:H});
+  layers = [cherry, pudding];
+  activeLayer = 1;
+  syncActiveMaskTexture();
+  rebuildBlend(); renderLayerUI();
+}
+
+// ============ 物理 ============
+const sl = id => parseFloat(document.getElementById(id).value);
+let extFX = 0, extFY = 0, simTime = 0;
+let press = null;
+let autoOn = false, previewShake = false, previewShakeMode = "all";
+let hapticOn = false;
+
+function computeInfl(x, y){
+  const R = Math.min(W, H) * 0.26;
+  const infl = new Float32Array(nVerts);
+  for(let k = 0; k < nVerts; k++){
+    const d = Math.hypot(rest[k*2] - x, rest[k*2+1] - y);
+    if(d < R){
+      const g = Math.exp(-(d*d) / (2 * (R*0.45) * (R*0.45)));
+      infl[k] = g * bAmp[k];
+    }
+  }
+  return infl;
+}
+function step(dt){
+  const scale = Math.min(W, H);
+  simTime += dt;
+  // 自動ゆれ / プレビュー加振の共通パラメータ
+  const aw = autoOn || previewShake;
+  let awAmp = 0, awPh = 0, awDir = "v", impulseFire = false;
+  if(aw){
+    if(previewShake){ awDir = "v"; awAmp = scale * 0.7; awPh = simTime * 5.0; }
+    else {
+      awDir = document.getElementById("autoDir").value;
+      const strength = sl("autoStr"), speed = sl("autoSpd");
+      awAmp = scale * (0.22 + strength * 1.1);
+      awPh = simTime * (1.5 + speed * 7);
+      if(awDir === "impulseV"){
+        const period = Math.max(0.15, 1.0 - speed * 0.8);
+        if(Math.floor(simTime/period) !== Math.floor((simTime-dt)/period)) impulseFire = true;
+      }
+    }
+  }
+  // 「選択中レイヤーのみ」プレビュー: そのレイヤー自身のマスクをゆらぎの適用範囲にする
+  const soloPreview = previewShake && previewShakeMode === "active" && layers[activeLayer];
+  const soloMask = soloPreview ? layers[activeLayer].mask : null;
+  const cxI = W * 0.5, cyI = H * 0.5;
+  for(let j = 0; j < ny; j++) for(let i = 0; i < nx; i++){
+    const k = j * nx + i;
+    const m = bAmp[k];
+    if(m < 0.004){ off[k*2]=0; off[k*2+1]=0; vel[k*2]=0; vel[k*2+1]=0; continue; }
+    const k2 = k * 2;
+    const ox = off[k2], oy = off[k2+1];
+    const L = i > 0 ? (k-1)*2 : k2, R = i < nx-1 ? (k+1)*2 : k2;
+    const U = j > 0 ? (k-nx)*2 : k2, D = j < ny-1 ? (k+nx)*2 : k2;
+    const avx = (off[L] + off[R] + off[U] + off[D]) * 0.25;
+    const avy = (off[L+1] + off[R+1] + off[U+1] + off[D+1]) * 0.25;
+    // 異方性: (ox,oy)と結合デルタを揺れやすい方向の局所座標系へ回転してから復元/伝播ばねを適用し、世界座標へ戻す
+    const cT = bAnisoCos[k], sT = bAnisoSin[k], rE = bAnisoRatioEff[k];
+    const dux = avx - ox, duy = avy - oy;
+    const ou = ox*cT + oy*sT, ov = -ox*sT + oy*cT;
+    const du = dux*cT + duy*sT, dv = -dux*sT + duy*cT;
+    const kRu = bKRet[k]/rE, kRv = bKRet[k]*rE;
+    const kCu = bKCup[k]*rE, kCv = bKCup[k]/rE;
+    const auLocal = -kRu*ou + kCu*du;
+    const avLocal = -kRv*ov + kCv*dv;
+    let ax = auLocal*cT - avLocal*sT + extFX * m;
+    let ay = auLocal*sT + avLocal*cT + extFY * m;
+    if(aw){
+      const wobbleMask = soloPreview ? soloMask[k] : m;
+      if(wobbleMask > 0.004){
+        if(awDir === "v") ay += Math.sin(awPh + rest[k2+1]*0.01) * awAmp * wobbleMask;
+        else if(awDir === "h") ax += Math.sin(awPh + rest[k2]*0.01) * awAmp * wobbleMask;
+        else if(awDir === "circle"){ ax += Math.cos(awPh) * awAmp * wobbleMask; ay += Math.sin(awPh) * awAmp * wobbleMask; }
+        else if(awDir === "circle2"){ ax += Math.cos(awPh) * awAmp * wobbleMask; ay -= Math.sin(awPh) * awAmp * wobbleMask; }
+        else if(awDir === "diag1"){ const s45 = Math.sin(awPh) * awAmp * wobbleMask * 0.7071; ax += s45; ay -= s45; }
+        else if(awDir === "diag2"){ const s45 = Math.sin(awPh) * awAmp * wobbleMask * 0.7071; ax += s45; ay += s45; }
+        else if(awDir === "ripple"){
+          const distC = Math.hypot(rest[k2]-cxI, rest[k2+1]-cyI);
+          ay += Math.sin(awPh - distC*0.02) * awAmp * wobbleMask;
+        } else if(awDir === "impulseV"){
+          if(impulseFire) ay -= (scale*(1.2+sl("autoStr")*1.8)*wobbleMask) / dt;
+        } else {
+          ax += Math.sin(awPh*1.3 + rest[k2]*0.02) * awAmp * wobbleMask * 0.7;
+          ay += Math.cos(awPh*0.9 + rest[k2+1]*0.017) * awAmp * wobbleMask * 0.7;
+        }
+      }
+    }
+    const dampE = Math.exp(-bDamp[k] * dt);
+    vel[k2]   = (vel[k2]   + ax * dt) * dampE;
+    vel[k2+1] = (vel[k2+1] + ay * dt) * dampE;
+    off[k2]   += vel[k2]   * dt;
+    off[k2+1] += vel[k2+1] * dt;
+  }
+  if(press){
+    const a = Math.min(1, dt * 30), calm = Math.exp(-14 * dt);
+    for(let k = 0; k < nVerts; k++){
+      const f = press.infl[k];
+      if(f <= 0) continue;
+      const k2 = k * 2;
+      const dx = press.x - rest[k2], dy = press.y - rest[k2+1];
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const pull = Math.min(press.depth * 0.6, len * 0.9) * f;
+      const tx = dx / len * pull, ty = dy / len * pull;
+      off[k2] += (tx - off[k2]) * a; off[k2+1] += (ty - off[k2+1]) * a;
+      vel[k2] *= calm; vel[k2+1] *= calm;
+    }
+  }
+  extFX *= Math.exp(-6 * dt); extFY *= Math.exp(-6 * dt);
+}
+function releasePress(){
+  if(!press) return;
+  const K = 9;
+  const strength = sl("tapStrength");
+  // タップの強さは反発初速そのものを直接スケールする（0→0.4倍, 0.6→1.36倍, 1→2.0倍）。
+  // velCap は「素早く離した時の指の速度」が暴発しないための天井として別途残す。
+  const mul = 0.4 + 1.6 * strength;
+  const velCap = Math.min(W, H) * (0.4 + 2.2 * strength);
+  let fvx = pressVX, fvy = pressVY;
+  const vmag = Math.hypot(fvx, fvy);
+  if(vmag > velCap){ const sc = velCap / vmag; fvx *= sc; fvy *= sc; }
+  for(let k = 0; k < nVerts; k++){
+    const f = press.infl[k];
+    if(f <= 0) continue;
+    const k2 = k * 2;
+    let dx = rest[k2] - press.x, dy = rest[k2+1] - press.y;
+    const len = Math.hypot(dx, dy);
+    if(len < 1){ const a = Math.random()*Math.PI*2; dx = Math.cos(a); dy = Math.sin(a); }
+    else { dx /= len; dy /= len; }
+    vel[k2]   += (dx * press.depth * K + fvx * 0.5) * f * mul;
+    vel[k2+1] += (dy * press.depth * K + fvy * 0.5) * f * mul;
+  }
+  if(hapticOn && press.depth > Math.min(W,H)*0.08) buzz(Math.min(60, press.depth*0.6|0));
+  // SE: ジェスチャ（押し込み量＋フリック速度）で強さ、クリック地点の揺れ設定で音量・ピッチを決める。
+  // 押し込み量は capDepth 基準で正規化し、弱タップ〜強フリックの幅を広く取る（B）。
+  const capDepth = Math.min(W, H) * (0.06 + 0.28 * sl("tapStrength"));
+  const depthN = Math.min(1, press.depth / capDepth);
+  const speedN = Math.min(1, Math.hypot(pressVX, pressVY) / velCap);
+  const gest = Math.max(0, Math.min(1, 0.12 + depthN * 0.5 + speedN * 0.5));
+  // 地点連動: press.infl（=ガウス×bAmp）から局所の揺れ量、bKRet から柔らかさを取る
+  let peakInfl = 0, softW = 0, wSum = 0;
+  for(let k = 0; k < nVerts; k++){
+    const w = press.infl[k];
+    if(w <= 0) continue;
+    if(w > peakInfl) peakInfl = w;
+    softW += bKRet[k] * w; wSum += w;
+  }
+  // 微量な揺れ（近接のチロチロ）は無音にする閾値。閾値〜1 を 0〜1 に伸ばして比例させる
+  const TH = 0.18;
+  const localJiggle = peakInfl <= TH ? 0 : Math.min(1, (peakInfl - TH) / (1 - TH));
+  const softness = wSum > 0 ? Math.max(0, Math.min(1, (300 - softW / wSum) / 255)) : 0;   // 0=硬い 1=柔らかい
+  se.boing(gest, 0.10 - 0.25 * softness, localJiggle);   // 柔らかいほど低く、揺れ量に比例した音量（揺れ範囲外は無音）
+  press = null;
+}
+function buzz(ms){ if(hapticOn && navigator.vibrate) try{ navigator.vibrate(ms); }catch(_){ } }
+
+// ============ 描画ループ ============
+let lastT = performance.now(), acc = 0;
+const SUB = 1 / 120;
+function frame(now){
+  if(glLost){ requestAnimationFrame(frame); return; }   // コンテキストロスト中はGL呼び出しをせず待機
+  let dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
+  acc += dt;
+  let n = 0;
+  while(acc >= SUB && n < 6){ step(SUB); acc -= SUB; n++; }
+  if(injectDirty) injectStamps();
+  if(fieldActive) flowField();
+  gl.useProgram(prog);
+  gl.viewport(0, 0, W, H);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, maskTex);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, field[cur].tex);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufOff); gl.bufferSubData(gl.ARRAY_BUFFER, 0, off);
+  gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  bindAttr(loc.aRest, bufRest, 2); bindAttr(loc.aOff, bufOff, 2);
+  bindAttr(loc.aUV, bufUV, 2);
+  gl.uniform1f(loc.uOverlay, showMask ? 1 : 0);
+  gl.uniform1f(loc.uLiqOp, sl("lqOp"));
+  gl.uniform1f(loc.uMaskStrength, sl("maskOpacity"));
+  const activeL = layers[activeLayer];
+  const tc = activeL ? activeL.color : [0,0,0];
+  gl.uniform3f(loc.uTint, tc[0], tc[1], tc[2]);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bufIdx);
+  gl.drawElements(gl.TRIANGLES, nIdx, gl.UNSIGNED_SHORT, 0);
+  if(recorder){
+    if(cropRec){
+      const inset = 0.09;
+      recCtx.drawImage(canvas, W*inset, H*inset, W*(1-2*inset), H*(1-2*inset), 0, 0, recCanvas.width, recCanvas.height);
+    } else {
+      recCtx.drawImage(canvas, 0, 0, recCanvas.width, recCanvas.height);
+    }
+    if(watermark) drawWatermark(recCtx);
+  }
+  requestAnimationFrame(frame);
+}
+function bindAttr(l, buf, size){
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(l);
+  gl.vertexAttribPointer(l, size, gl.FLOAT, false, 0, 0);
+}
+
+// ============ 入力（キャンバス操作） ============
+function toCanvas(e){
+  const r = canvas.getBoundingClientRect();
+  return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
+}
+let lastPX = 0, lastPY = 0;
+let pressVX = 0, pressVY = 0, pressLastMoveT = 0;   // 押し込み中の指の速度（離す瞬間の初速に加算）
+function onDown(e){
+  if(gesturing) return;   // 2本指ジェスチャ（拡縮/移動）中は無視
+  if(e.shiftKey && e.pointerType === "mouse"){ e.preventDefault(); startPan(e); return; }  // Shift+ドラッグで移動
+  e.preventDefault();
+  try{ canvas.setPointerCapture(e.pointerId); }catch(_){ }
+  const [x, y] = toCanvas(e);
+  if(mode === "play"){
+    // 触れた瞬間の押し込み深さもタップの強さに連動させる（軽いタップでも差が出るように）
+    const depth0 = Math.min(W, H) * (0.02 + 0.06 * sl("tapStrength"));
+    press = {x, y, depth: depth0, infl: computeInfl(x, y), lastIX: x, lastIY: y};
+    lastPX = x; lastPY = y;
+    pressVX = 0; pressVY = 0; pressLastMoveT = performance.now();
+    se.press(depth0);
+  } else if(mode === "liquid"){
+    stamp(x, y, 1); lastKX = x; lastKY = y;
+    se.splash(); se.pourGate(true);
+  } else { // setup
+    if(setupSub === "ai"){
+      aiPts = [[x, y]];
+      if(layers[activeLayer]){ aiUndoBefore = layers[activeLayer].ctx.getImageData(0, 0, W, H); aiUndoLayer = layers[activeLayer]; }
+      updateAiTrail();
+    } else paintDown(x, y);
+  }
+}
+function onMove(e){
+  if(gesturing) return;
+  if(panning){ viewX = panning.vx + (e.clientX - panning.x); viewY = panning.vy + (e.clientY - panning.y); applyView(); return; }
+  if(e.buttons === 0) return;
+  const [x, y] = toCanvas(e);
+  if(mode === "play" && press){
+    const nowT = performance.now();
+    const dtms = Math.max(1, nowT - pressLastMoveT);
+    const dist = Math.hypot(x - lastPX, y - lastPY);
+    const capDepth = Math.min(W, H) * (0.06 + 0.28 * sl("tapStrength"));
+    press.depth = Math.min(press.depth + dist * 0.55, capDepth);
+    // 指の速度（px/秒相当）を指数移動平均で推定。離した瞬間の初速に加算する
+    const ivx = (x - lastPX) / dtms * 1000, ivy = (y - lastPY) / dtms * 1000;
+    pressVX = pressVX * 0.6 + ivx * 0.4;
+    pressVY = pressVY * 0.6 + ivy * 0.4;
+    pressLastMoveT = nowT;
+    press.x = x; press.y = y; lastPX = x; lastPY = y;
+    if(Math.hypot(x - press.lastIX, y - press.lastIY) > Math.min(W, H) * 0.03){
+      press.infl = computeInfl(x, y); press.lastIX = x; press.lastIY = y;
+    }
+  } else if(mode === "liquid"){
+    pourTo(x, y);
+  } else if(mode === "setup"){
+    if(setupSub === "ai" && aiPts){
+      const last = aiPts[aiPts.length - 1];
+      if(Math.hypot(x - last[0], y - last[1]) > Math.min(W, H) * 0.02){ aiPts.push([x, y]); updateAiTrail(); }
+    } else if(setupSub === "add" || setupSub === "erase"){
+      paintTo(x, y);
+    }
+  }
+}
+function onUp(){
+  if(panning){ panning = null; return; }
+  document.getElementById("aiTrailSvg").style.display = "none";
+  if(mode === "setup" && setupSub === "ai" && aiPts){ const p = aiPts; aiPts = null; aiPick(p); }
+  else if(mode === "setup" && (setupSub === "add" || setupSub === "erase")){ commitStroke(); }
+  releasePress();
+  se.pourGate(false);          // 注ぎ音を止める
+  flushPendingLateReplace();   // 押下中に届いた後着AI差し替えをここで反映
+}
+canvas.addEventListener("pointerdown", onDown);
+canvas.addEventListener("pointermove", onMove);
+canvas.addEventListener("pointerup", onUp);
+canvas.addEventListener("pointercancel", () => {
+  document.getElementById("aiTrailSvg").style.display = "none";
+  aiPts = null; press = null; aiUndoBefore = null;
+  se.pourGate(false);
+  if(strokeDirty){
+    strokeDirty = null; undoBeforeFull = null;
+    clearStrokeBuffers();
+    if(layers[activeLayer]) syncActiveMaskTexture();
+  }
+});
+// 筆カーソル（塗る/消すモード中、筆サイズの円をポインタへ追従表示）
+canvas.addEventListener("pointermove", e => updateBrushCursor(e.clientX, e.clientY));
+canvas.addEventListener("pointerleave", () => {
+  document.getElementById("brushCursorOuter").style.display = "none";
+  document.getElementById("brushCursorInner").style.display = "none";
+});
+function updateBrushCursor(clientX, clientY){
+  const outer = document.getElementById("brushCursorOuter"), inner = document.getElementById("brushCursorInner");
+  const show = (mode === "setup" && (setupSub === "add" || setupSub === "erase"));
+  if(!show){ outer.style.display = "none"; inner.style.display = "none"; return; }
+  const r = canvas.getBoundingClientRect();
+  const scaleCss = r.width / W;
+  const R = sl("brush") * Math.min(W, H) * scaleCss;
+  const h = sl("brushHard");
+  outer.style.display = "block";
+  outer.style.left = clientX + "px"; outer.style.top = clientY + "px";
+  outer.style.width = (R*2) + "px"; outer.style.height = (R*2) + "px";
+  if(h > 0.02){
+    const Rp = R * h;
+    inner.style.display = "block";
+    inner.style.left = clientX + "px"; inner.style.top = clientY + "px";
+    inner.style.width = (Rp*2) + "px"; inner.style.height = (Rp*2) + "px";
+  } else inner.style.display = "none";
+}
+
+// 筆1スタンプを「対象キャンバス」へ放射グラデーションで描画（layerLikeは{ctx}を持つ任意オブジェクト＝ストローク一時バッファ）。
+// 硬さプロファイル（SPEC-brush.md）をグラデーションのカラーストップで近似:
+// profile(t) = 1 - 3t²+2t³ (t=0..1はプラトー半径→外周の正規化距離。canvasのcolorStopオフセットと一致)
+//
+// ストロークバッファへは「触れた強さ」を【不透明グレー（R=G=B=強度, α=1）】として積む。
+// canvasの lighten は色チャンネルのみmaxで、αは source-over 合成される。強度をαで持つと
+// ドラッグの重ね打ちでαが 1-(1-s)^n と累積し、濃さを下げても数スタンプで飽和してしまう
+// （＝「クリックは薄いのにドラッグで即濃くなる」バグ）。色チャンネルに持てば lighten が
+// 真のper-channel maxになり、1ストローク内の強度は「濃さ」で頭打ちになる。
+// 外周ストップは不透明黒(0)になるが、maxなので既存ピクセルを暗くすることはない。
+// このエンコードはストロークバッファ内に閉じている（レイヤー本体・シェーダー・保存はαのまま）。
+// ライブプレビューはαを要求するため、syncStrokeAlpha() でαミラーへ変換して使う。
+// add/eraseの向きは、これを消費する側（livePreview／commitStroke）でのみ適用する。
+function drawMaskStamp(layerLike, x, y){
+  const R = sl("brush") * Math.min(W, H);
+  const h = sl("brushHard");
+  const s = Math.max(0, Math.min(1, sl("brushDense")));
+  const plateau = Math.max(0, Math.min(h * R, R * 0.999));
+  const ctx = layerLike.ctx;
+  const stops = [[0,1],[0.25,0.84375],[0.5,0.5],[0.75,0.15625],[1,0]];
+  ctx.save();
+  ctx.globalCompositeOperation = "lighten";
+  const g = ctx.createRadialGradient(x, y, plateau, x, y, Math.max(plateau + 0.01, R));
+  for(const [o, v] of stops){
+    const gray = Math.round(255 * v * s);
+    g.addColorStop(o, "rgb(" + gray + "," + gray + "," + gray + ")");
+  }
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+// ストロークバッファ（強度=R）を αエンコードのミラーへ、今回打った矩形だけ変換して同期する。
+// ctx.filter（輝度→α変換）はSafari非対応のため使えないので、ピクセルを直接書き換える。
+// rect はストローク全体ではなく「この1回のmoveで打ったスタンプ列のbbox」を渡すこと（矩形が育つと重い）。
+function syncStrokeAlpha(rect){
+  if(rect.w <= 0 || rect.h <= 0) return;
+  const src = strokeCtx.getImageData(rect.x, rect.y, rect.w, rect.h);
+  const d = src.data;
+  for(let i = 0; i < d.length; i += 4){
+    d[i+3] = d[i];                  // α ← R（強度）
+    d[i] = d[i+1] = d[i+2] = 255;   // 色は白に統一
+  }
+  strokeAlphaCtx.putImageData(src, rect.x, rect.y);   // putImageDataは置換なので合成不要
+}
+function clearStrokeBuffers(){
+  strokeCanvas.width = W;        // 代入だけでクリアされる（同値でも可）
+  strokeAlphaCanvas.width = W;
+}
+let lastPaintX = 0, lastPaintY = 0, strokeDirty = null;
+let undoBeforeFull = null, undoBeforeLayer = null;
+function trackStrokeDirty(x, y, R){
+  const x0 = x - R, y0 = y - R, x1 = x + R, y1 = y + R;
+  if(!strokeDirty) strokeDirty = {x0, y0, x1, y1};
+  else {
+    strokeDirty.x0 = Math.min(strokeDirty.x0, x0); strokeDirty.y0 = Math.min(strokeDirty.y0, y0);
+    strokeDirty.x1 = Math.max(strokeDirty.x1, x1); strokeDirty.y1 = Math.max(strokeDirty.y1, y1);
+  }
+}
+// ストローク中のライブ表示: 確定済みレイヤーのコピーへ、現ストロークの「触れた強さ」を
+// 塗りならlighten・消しならdestination-outで重ねて見せる（正確な数式合成は確定時のcommitStrokeで行う）
+function livePreview(L, add){
+  previewCtx.clearRect(0, 0, W, H);
+  previewCtx.drawImage(L.canvas, 0, 0);
+  previewCtx.globalCompositeOperation = add ? "lighten" : "destination-out";
+  previewCtx.drawImage(strokeAlphaCanvas, 0, 0);   // 塗り/消しともαに依存するのでαミラーを使う
+  previewCtx.globalCompositeOperation = "source-over";
+  gl.bindTexture(gl.TEXTURE_2D, maskTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, previewCanvas);
+}
+function paintDown(x, y){
+  const L = layers[activeLayer]; if(!L) return;
+  clearStrokeBuffers();
+  strokeDirty = null;
+  undoBeforeFull = L.ctx.getImageData(0, 0, W, H);
+  undoBeforeLayer = L;
+  const R = sl("brush") * Math.min(W, H);
+  const add = (setupSub === "add");
+  // ストロークバッファには常に「触れた強さ」を正の値で蓄積する（add/eraseの向きは確定時とプレビューでのみ適用）
+  drawMaskStamp({ctx:strokeCtx}, x, y);
+  trackStrokeDirty(x, y, R);
+  syncStrokeAlpha(clampRectXYXY({x0:x-R, y0:y-R, x1:x+R, y1:y+R}));
+  lastPaintX = x; lastPaintY = y;
+  livePreview(L, add);
+}
+// P0→P1を補間して一定間隔（筆半径×0.25）でスタンプを敷き詰める。確定はストローク終了時（commitStroke）にまとめて行う。
+function paintTo(x, y){
+  const L = layers[activeLayer]; if(!L) return;
+  const R = sl("brush") * Math.min(W, H);
+  const spacing = Math.max(1, R * 0.25);
+  const dx = x - lastPaintX, dy = y - lastPaintY;
+  const dist = Math.hypot(dx, dy);
+  const steps = Math.min(200, Math.max(1, Math.ceil(dist / spacing)));
+  const add = (setupSub === "add");
+  for(let i = 1; i <= steps; i++){
+    const t = i / steps;
+    const px = lastPaintX + dx * t, py = lastPaintY + dy * t;
+    drawMaskStamp({ctx:strokeCtx}, px, py);
+    trackStrokeDirty(px, py, R);
+  }
+  // αミラーの同期は「今回打った分」のbboxだけ（P0→P1の線分＋筆半径）に限定する
+  syncStrokeAlpha(clampRectXYXY({
+    x0: Math.min(lastPaintX, x) - R, y0: Math.min(lastPaintY, y) - R,
+    x1: Math.max(lastPaintX, x) + R, y1: Math.max(lastPaintY, y) + R,
+  }));
+  lastPaintX = x; lastPaintY = y;
+  livePreview(L, add);
+}
+// ストローク確定: strokeCanvasの寄与を、塗り=スクリーン合成／消し=乗算合成でレイヤーへ焼き込む（ストロークを跨ぐと濃度が積み上がる）
+function clampRectXYXY(r){
+  const x0 = Math.max(0, Math.floor(r.x0)), y0 = Math.max(0, Math.floor(r.y0));
+  const x1 = Math.min(W, Math.ceil(r.x1)), y1 = Math.min(H, Math.ceil(r.y1));
+  return {x:x0, y:y0, w:x1-x0, h:y1-y0};
+}
+function commitStroke(){
+  if(!strokeDirty || !undoBeforeLayer){ strokeDirty = null; undoBeforeFull = null; return; }
+  userTouchedMask = true;   // 手動の塗り/消しはユーザー操作（後着AI差し替えを止める）
+  const L = undoBeforeLayer;
+  const add = (setupSub === "add");
+  const rect = clampRectXYXY(strokeDirty);
+  if(rect.w > 0 && rect.h > 0){
+    const cur = L.ctx.getImageData(rect.x, rect.y, rect.w, rect.h);
+    const strokeData = strokeCtx.getImageData(rect.x, rect.y, rect.w, rect.h);
+    const cd = cur.data, sd = strokeData.data;
+    for(let i = 3; i < cd.length; i += 4){
+      // レイヤー側は従来どおりα、ストローク側は強度をRチャンネルに持つ（drawMaskStamp参照）
+      const c = cd[i] / 255, s = sd[i-3] / 255;
+      const v = add ? (1 - (1-c) * (1-s)) : (c * (1-s));   // スクリーン合成 / 乗算合成
+      cd[i] = Math.round(v * 255);
+      cd[i-3] = 255; cd[i-2] = 255; cd[i-1] = 255;
+    }
+    L.ctx.putImageData(cur, rect.x, rect.y);
+    syncVertexCacheFromCanvas(L, rect);
+    if(layers[activeLayer] === L) syncActiveMaskTexture();
+    rebuildBlend();
+    pushUndoEntry(L, strokeDirty, undoBeforeFull);
+  }
+  strokeDirty = null; undoBeforeFull = null;
+}
+// 液体の注ぎ: P0→P1を補間し、小さめ（scale0.45）のスタンプに±10%の揺らぎを乗せて敷く
+function pourTo(x, y){
+  const base = sl("lqSize") * Math.min(W, H);
+  const spacing = Math.max(1, base * 0.35);
+  const dx = x - lastKX, dy = y - lastKY;
+  const dist = Math.hypot(dx, dy);
+  const steps = Math.min(200, Math.max(1, Math.ceil(dist / spacing)));
+  const len = Math.max(1e-3, dist);
+  const nx2 = -dy / len, ny2 = dx / len;   // 進行方向の法線（横ズレ用）
+  for(let i = 1; i <= steps; i++){
+    const t = i / steps;
+    const jit = (Math.random() - 0.5) * 0.2 * base;      // 横位置 ±10%
+    const px = lastKX + dx * t + nx2 * jit;
+    const py = lastKY + dy * t + ny2 * jit;
+    const sc = 0.45 * (0.9 + Math.random() * 0.2);        // サイズ ±10%
+    stamp(px, py, sc);
+  }
+  lastKX = x; lastKY = y;
+}
+
+// ============ レイヤーUI ============
+const layerListEl = document.getElementById("layerList");
+const presetSel = document.getElementById("presetSel");
+// 言語切替のたびに作り直す（選択中の値は保持）
+function renderPresetOptions(){
+  const keep = presetSel.value;
+  presetSel.innerHTML = "";
+  for(const p of PRESETS){
+    const o = document.createElement("option");
+    o.value = p.key; o.textContent = t(p.labelKey); presetSel.appendChild(o);
+  }
+  if(keep) presetSel.value = keep;
+}
+renderPresetOptions();
+function colCss(c){ return "rgb(" + (c[0]*255|0) + "," + (c[1]*255|0) + "," + (c[2]*255|0) + ")"; }
+function renderLayerUI(){
+  layerListEl.innerHTML = "";
+  layers.forEach((L, i) => {
+    const row = document.createElement("div");
+    row.className = "lrow" + (i === activeLayer ? " sel" : "");
+    const sw = document.createElement("span"); sw.className = "lsw"; sw.style.background = colCss(L.color);
+    const nm = document.createElement("span"); nm.textContent = L.name;
+    const lp = document.createElement("span"); lp.className = "lp"; lp.textContent = t("layer.softChip") + Math.round(L.params.soft * 100);
+    row.appendChild(sw); row.appendChild(nm); row.appendChild(lp);
+    row.onclick = () => { activeLayer = i; renderLayerUI(); syncActiveMaskTexture(); rebuildBlend(); };
+    layerListEl.appendChild(row);
+  });
+  // 上限到達で[追加]をグレーアウト（追加・削除・保存復元など全経路がここを通る）
+  document.getElementById("bLAdd").disabled = layers.length >= LAYER_CAP;
+  syncSliders();
+}
+function hexToRgbF(hex){
+  const v = parseInt(hex.slice(1), 16);
+  return [((v>>16)&255)/255, ((v>>8)&255)/255, (v&255)/255];
+}
+function rgbFToHex(c){
+  const h = v => Math.round(Math.max(0,Math.min(1,v))*255).toString(16).padStart(2,"0");
+  return "#" + h(c[0]) + h(c[1]) + h(c[2]);
+}
+function syncSliders(){
+  const L = layers[activeLayer];
+  if(!L) return;
+  document.getElementById("soft").value = L.params.soft;
+  document.getElementById("spread").value = L.params.spread;
+  document.getElementById("settle").value = L.params.settle;
+  document.getElementById("amp").value = L.params.amp;
+  document.getElementById("anisoAngle").value = L.params.anisoAngle;
+  document.getElementById("anisoRatio").value = L.params.anisoRatio;
+  document.getElementById("layerColor").value = rgbFToHex(L.color);
+  refreshSliderNums();
+}
+for(const id of ["soft","spread","settle","amp","anisoAngle","anisoRatio"]){
+  document.getElementById(id).addEventListener("input", () => {
+    const L = layers[activeLayer];
+    if(!L) return;
+    L.params[id] = sl(id); rebuildBlend();
+    const rows = layerListEl.children;
+    layers.forEach((L2, i) => { if(rows[i]) rows[i].lastChild.textContent = t("layer.softChip") + Math.round(L2.params.soft * 100); });
+  });
+}
+document.getElementById("layerColor").addEventListener("input", () => {
+  const L = layers[activeLayer]; if(!L) return;
+  L.color = hexToRgbF(document.getElementById("layerColor").value);
+  renderLayerUI();
+});
+presetSel.addEventListener("change", () => {
+  const p = PRESETS.find(q => q.key === presetSel.value);
+  const L = layers[activeLayer];
+  if(!p || !L) return;
+  Object.assign(L.params, p.params); rebuildBlend(); renderLayerUI();
+});
+document.getElementById("bLUp").onclick = () => {
+  if(activeLayer <= 0) return;
+  userTouchedMask = true;
+  const t = layers[activeLayer-1]; layers[activeLayer-1] = layers[activeLayer]; layers[activeLayer] = t;
+  activeLayer--; rebuildBlend(); renderLayerUI();
+};
+document.getElementById("bLDown").onclick = () => {
+  if(activeLayer >= layers.length-1) return;
+  userTouchedMask = true;
+  const t = layers[activeLayer+1]; layers[activeLayer+1] = layers[activeLayer]; layers[activeLayer] = t;
+  activeLayer++; rebuildBlend(); renderLayerUI();
+};
+let layerNameSeq = 1;
+document.getElementById("bLAdd").onclick = () => {
+  if(layers.length >= LAYER_CAP){ setHint(t("hint.layerCap", {n: LAYER_CAP})); return; }
+  userTouchedMask = true;
+  // デフォルト名は「新規生成時の言語」で作る（既存レイヤー名は言語切替の影響を受けない）
+  layers.unshift(makeLayer(t("layer.defaultName") + (layerNameSeq++), "puru", false));
+  activeLayer = 0; syncActiveMaskTexture(); rebuildBlend(); renderLayerUI();
+  setHint(t("hint.layerAdded"));
+};
+document.getElementById("bLDel").onclick = () => {
+  if(layers.length <= 1){ setHint(t("hint.lastLayer")); return; }
+  userTouchedMask = true;
+  layers.splice(activeLayer, 1); activeLayer = Math.min(activeLayer, layers.length-1);
+  syncActiveMaskTexture(); rebuildBlend(); renderLayerUI();
+};
+document.getElementById("bLRename").onclick = () => {
+  const L = layers[activeLayer]; if(!L) return;
+  let name = null; try{ name = prompt(t("layer.namePrompt"), L.name); }catch(_){ }
+  if(name){ L.name = name; renderLayerUI(); }
+};
+document.getElementById("bLClear").onclick = () => {
+  const L = layers[activeLayer]; if(!L) return;
+  userTouchedMask = true;
+  L.ctx.clearRect(0, 0, W, H);
+  L.mask.fill(0);
+  syncActiveMaskTexture(); rebuildBlend();
+};
+
+// ============ モード / サブモード切替 ============
+const hintEl = document.getElementById("hint");
+function setHint(t){ hintEl.textContent = t; }
+// トグルボタンは表示された時点の幅で固定し、状態文字（オン/オフ）の字形差でも伸縮させない
+function lockToggleWidths(){
+  document.querySelectorAll("button.tgl:not(.tglw)").forEach(b => {
+    if(b.dataset.locked) return;
+    if(b.offsetWidth > 0){ const w = b.offsetWidth + 2; b.style.minWidth = w + "px"; b.style.width = w + "px"; b.dataset.locked = "1"; }
+  });
+}
+function updateHint(){
+  if(mode === "play") setHint(t("hint.play"));
+  else if(mode === "liquid") setHint(t("hint.liquid"));
+  else if(mode === "setup"){
+    setHint(setupSub === "ai" ? t("hint.setupAI")
+      : setupSub === "add" ? t("hint.setupAdd")
+      : t("hint.setupErase"));
+  }
+}
+// トグルボタンのラベル生成（「ラベル: オン/オフ」の型を全言語で共通に保つ）
+function setToggle(btn, labelKey, on){
+  btn.textContent = t(labelKey) + ": " + t(on ? "common.on" : "common.off");
+  btn.classList.toggle("on", on);
+}
+function setShowMask(v){
+  showMask = v;
+  setToggle(document.getElementById("bMask"), "setup.showArea", showMask);
+}
+function setAutoOn(v){
+  autoOn = v;
+  setToggle(document.getElementById("bAuto"), "play.autoJiggle", autoOn);
+}
+function setMode(m){
+  mode = m;
+  document.querySelectorAll(".mtab").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
+  document.getElementById("pane-play").classList.toggle("on", m === "play");
+  document.getElementById("pane-setup").classList.toggle("on", m === "setup");
+  document.getElementById("pane-liquid").classList.toggle("on", m === "liquid");
+  const painting = (m === "liquid") || (m === "setup" && setupSub !== "ai");
+  canvas.classList.toggle("painting", painting);
+  // フル画面の右上ボタンの押下状態を現モードに同期（enterFs直後・FS中の切替の両方をカバー）
+  document.getElementById("bFsPlay").classList.toggle("on", m === "play");
+  document.getElementById("bFsLiquid").classList.toggle("on", m === "liquid");
+  if(m === "play" || m === "liquid"){
+    if(showMask) setShowMask(false);   // 遊ぶ/かける時は範囲の色が邪魔なので自動でオフ
+    if(m === "play") setAutoOn(true);  // ゆらすに入ったら自動ゆれを再開（ゆれ設定で止まるので戻るたびON）
+  } else if(m === "setup"){
+    if(!showMask) setShowMask(true);   // 設定中は見えている方が良いので自動でオン
+    if(autoOn) setAutoOn(false);       // 自動ゆれは設定作業の邪魔になるので停止
+  }
+  if(m !== "setup"){
+    document.getElementById("brushCursorOuter").style.display = "none";
+    document.getElementById("brushCursorInner").style.display = "none";
+  }
+  lockToggleWidths();
+  updateHint();
+  syncCenterHeight();
+}
+document.querySelectorAll(".mtab").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+function setSub(s){
+  setupSub = s;
+  document.querySelectorAll("#pane-setup .subtabs button").forEach(b => b.classList.toggle("on", b.dataset.sub === s));
+  const isAI = (s === "ai");
+  document.getElementById("aiBox").style.display = isAI ? "block" : "none";
+  document.getElementById("brushBox").style.display = isAI ? "none" : "block";
+  canvas.classList.toggle("painting", !isAI);
+  if(isAI){
+    document.getElementById("brushCursorOuter").style.display = "none";
+    document.getElementById("brushCursorInner").style.display = "none";
+  }
+  lockToggleWidths();
+  if(isAI) loadSegmenter();   // 「自動選択」を開いた時点で初回のみ自動DL
+  updateHint();
+}
+document.querySelectorAll("#pane-setup .subtabs button").forEach(b => b.addEventListener("click", () => setSub(b.dataset.sub)));
+
+// ============ ゆらすモードの操作 ============
+function pokeAll(dir){
+  const s = Math.min(W, H) * sl("pokeStrength");
+  for(let k = 0; k < nVerts; k++){
+    const m = bAmp[k];
+    if(m <= 0) continue;
+    if(dir === "v"){
+      vel[k*2]   += (Math.random() - 0.5) * s * 1.2 * m;
+      vel[k*2+1] -= s * (1.6 + Math.random() * 0.6) * m;
+    } else {
+      vel[k*2]   += s * (1.6 + Math.random() * 0.6) * (Math.random() < 0.5 ? -1 : 1) * m;
+      vel[k*2+1] += (Math.random() - 0.5) * s * 0.6 * m;
+    }
+  }
+  buzz(30);
+  const st = Math.max(0, Math.min(1, (sl("pokeStrength") - 0.2) / 1.8));
+  se.boing(st, dir === "v" ? -0.15 : 0.15);   // 縦-15% / 横+15%
+}
+document.getElementById("bPokeV").onclick = () => pokeAll("v");
+document.getElementById("bPokeH").onclick = () => pokeAll("h");
+document.getElementById("bReset").onclick = () => { off.fill(0); vel.fill(0); };
+document.getElementById("bAuto").onclick = () => setAutoOn(!autoOn);
+// 揺れプレビュー（押してる間だけ）: 選択中レイヤーのみ / 全レイヤー
+function bindPreviewBtn(id, modeName){
+  const b = document.getElementById(id);
+  const start = e => { e.preventDefault(); previewShake = true; previewShakeMode = modeName; };
+  const end = () => { if(previewShake){ previewShake = false; off.fill(0); vel.fill(0); } };
+  b.addEventListener("pointerdown", start);
+  b.addEventListener("pointerup", end);
+  b.addEventListener("pointerleave", end);
+  b.addEventListener("pointercancel", end);
+}
+bindPreviewBtn("bPreviewActive", "active");
+bindPreviewBtn("bPreviewAll", "all");
+document.getElementById("bMask").onclick = () => setShowMask(!showMask);
+document.getElementById("bHaptic").onclick = e => {
+  hapticOn = !hapticOn;
+  setToggle(e.target, "misc.haptic", hapticOn);
+  if(hapticOn) buzz(40);
+};
+
+// ============ 画像読み込み（ボタン / D&D / 貼り付け） ============
+let srcCanvas = null;
+function loadImageFile(f){
+  if(!f || !/^image\//.test(f.type || "")) return;
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(img.src);
+    stopRec();
+    const MAX = 1000;
+    const sc = Math.min(1, MAX / Math.max(img.width, img.height));
+    const w = Math.round(img.width * sc), h = Math.round(img.height * sc);
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    c.getContext("2d").drawImage(img, 0, 0, w, h);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+    buildMesh(w, h);
+    srcCanvas = c;
+    layers = [makeLayer(t("layer.defaultName") + "1", "puru", false)];
+    activeLayer = 0; layerNameSeq = 2;
+    syncActiveMaskTexture(); rebuildBlend(); renderLayerUI();
+    setSub("add");
+    beginAutoSelect();   // AI自動選択→（失敗/遅延時）全面フェザーマスク→ゆらす
+  };
+  img.src = URL.createObjectURL(f);
+}
+document.getElementById("file").addEventListener("change", e => { loadImageFile(e.target.files && e.target.files[0]); e.target.value = ""; });
+let dragDepth = 0;
+window.addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; document.body.classList.add("dragging"); });
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("dragleave", () => { if(--dragDepth <= 0){ dragDepth = 0; document.body.classList.remove("dragging"); } });
+window.addEventListener("drop", e => {
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging");
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  loadImageFile(f);
+});
+document.addEventListener("paste", e => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if(!items) return;
+  for(const it of items){ if(it.type.indexOf("image/") === 0){ loadImageFile(it.getAsFile()); break; } }
+});
+
+// ============ 設定のエクスポート / インポート ============
+// 画像・レイヤー・各レイヤーの物理設定をまとめて1ファイルに保存/復元
+document.getElementById("bExport").onclick = () => {
+  if(!srcCanvas){ setHint(t("hint.loadFirst")); return; }
+  const data = {
+    v: 3, w: W, h: H, activeLayer,
+    image: srcCanvas.toDataURL("image/png"),
+    layers: layers.map(L => ({name: L.name, params: L.params, color: L.color, maskImage: L.canvas.toDataURL("image/png")}))
+  };
+  const blob = new Blob([JSON.stringify(data)], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = "purin-settings.json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  setHint(t("hint.saved"));
+};
+document.getElementById("importFile").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if(!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data;
+    try{ data = JSON.parse(reader.result); }catch(_){ setHint(t("hint.badFile")); return; }
+    if(!data || !data.image || !Array.isArray(data.layers)){ setHint(t("hint.badSettings")); return; }
+    const img = new Image();
+    img.onload = () => {
+      stopRec();
+      // インポートは自動選択フローの対象外。進行中フローを無効化し後着AIの差し替えも止める
+      imgGen++; if(autoFlow){ clearTimeout(autoFlow.timer); autoFlow = null; }
+      pendingLateReplace = null; document.body.style.cursor = "";
+      const w = data.w || img.width, h = data.h || img.height;
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+      buildMesh(w, h);
+      srcCanvas = c;
+      // 各レイヤーのマスク画像（ピクセルキャンバス）を読み込んでから確定する
+      Promise.all(data.layers.map(Ld => new Promise(resolve => {
+        // 保存済みのレイヤー名はユーザーデータなのでそのまま復元する（名前が無い時だけ現在言語の既定名）
+        const L = makeLayer(Ld.name || t("layer.defaultName"), "puru", false);
+        L.params = Object.assign({soft:0.65, spread:0.5, settle:0.35, amp:1, anisoAngle:90, anisoRatio:1}, Ld.params);
+        L.color = (Ld.color || LAYER_COLORS[0]).slice();
+        if(Ld.maskImage){
+          const mi = new Image();
+          mi.onload = () => { L.ctx.drawImage(mi, 0, 0, w, h); syncVertexCacheFromCanvas(L, {x:0, y:0, w, h}); resolve(L); };
+          mi.onerror = () => resolve(L);
+          mi.src = Ld.maskImage;
+        } else if(Array.isArray(Ld.mask)){
+          // 旧形式（頂点配列）フォールバック: 頂点キャッシュへ直接。キャンバス側は空のまま（表示はやや粗い）
+          for(let i = 0; i < nVerts && i < Ld.mask.length; i++) L.mask[i] = Ld.mask[i];
+          resolve(L);
+        } else resolve(L);
+      }))).then(newLayers => {
+        layers = newLayers.length ? newLayers : [makeLayer(t("layer.defaultName") + "1", "puru", false)];
+        activeLayer = Math.min(data.activeLayer || 0, layers.length - 1);
+        layerNameSeq = layers.length + 1;
+        syncActiveMaskTexture(); rebuildBlend(); renderLayerUI();
+        setMode("setup"); setSub("add");
+        setHint(t("hint.settingsLoaded"));
+      });
+    };
+    img.src = data.image;
+  };
+  reader.readAsText(f);
+});
+
+// ============ AI自動選択（MediaPipe・コア流用） ============
+let segmenter = null, aiAddMode = true, aiBusy = false, aiLoading = false;
+const MP_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const MP_ESM = MP_BASE + "/vision_bundle.mjs";
+const MP_MODEL = "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/1/magic_touch.tflite";
+// silent=true（自動選択フロー経由）: hint / statusEl / retry の表示を出さない（フローが自前で管理し、
+// エラー表示も一切出さない）。手動（AI選択タブ・再準備ボタン）は従来どおりメッセージを出す。
+async function loadSegmenter(silent){
+  if(segmenter || aiLoading) return;
+  aiLoading = true;
+  const statusEl = document.getElementById("aiStatus");
+  const retryRow = document.getElementById("aiRetryRow");
+  if(!silent){
+    statusEl.style.display = "block"; statusEl.textContent = t("setup.aiStatus");
+    retryRow.style.display = "none";
+    setHint(t("hint.aiPreparing"));
+  }
+  try{
+    const mod = await import(MP_ESM);
+    const vision = await mod.FilesetResolver.forVisionTasks(MP_BASE + "/wasm");
+    segmenter = await mod.InteractiveSegmenter.createFromOptions(vision, {
+      baseOptions: {modelAssetPath: MP_MODEL},
+      outputConfidenceMasks: true, outputCategoryMask: false
+    });
+    if(!silent){ statusEl.style.display = "none"; setHint(t("hint.aiReady")); }
+  }catch(err){
+    console.error(err);
+    if(!silent){ statusEl.style.display = "none"; retryRow.style.display = "flex"; setHint(t("hint.aiFailed")); }
+  }
+  aiLoading = false;
+}
+document.getElementById("bAILoad").onclick = () => loadSegmenter();   // クリックイベントを silent 引数に渡さない
+document.getElementById("bAIAdd").onclick = e => {
+  aiAddMode = !aiAddMode;
+  setToggle(e.target, "setup.aiAdd", aiAddMode);
+};
+function smoothstepf(a, b, x){ x = Math.max(0, Math.min(1, (x - a) / (b - a))); return x * x * (3 - 2 * x); }
+// gw×gh の選択グリッド値をバイリニアで W×H へ引き伸ばし、レイヤーのマスクキャンバスへ
+// 直接合成する。マスクのネイティブ解像度をそのまま渡すことで AI選択の境界が滑らかになる。
+function blitGridToLayer(L, sel, gw, gh, addMode){
+  const small = document.createElement("canvas");
+  small.width = gw; small.height = gh;
+  const sctx = small.getContext("2d");
+  const simg = sctx.createImageData(gw, gh);
+  const n = gw * gh;
+  for(let k = 0; k < n; k++){
+    const a = Math.max(0, Math.min(1, sel[k])) * 255;
+    simg.data[k*4]=255; simg.data[k*4+1]=255; simg.data[k*4+2]=255; simg.data[k*4+3]=a;
+  }
+  sctx.putImageData(simg, 0, 0);
+  if(!addMode) L.ctx.clearRect(0, 0, W, H);
+  L.ctx.save();
+  L.ctx.globalCompositeOperation = addMode ? "lighten" : "source-over";
+  L.ctx.imageSmoothingEnabled = true;
+  L.ctx.imageSmoothingQuality = "high";
+  L.ctx.drawImage(small, 0, 0, gw, gh, 0, 0, W, H);
+  L.ctx.restore();
+}
+let aiPts = null;
+// 信頼度マスク cm と pts から、マスク解像度の選択配列を作る（適用・addModeは呼び出し側）。
+// 選択・BFS・ひろがりをすべてマスクのネイティブ解像度で行い、境界を滑らかに保つ（v0.17 Part B）。
+function maskToSelection(cm, pts){
+  let mw = cm.width, mh = cm.height, arr = cm.getAsFloat32Array();
+  // 巨大解像度ガード（通常到達しない保険）: 長辺 2048 に収まるよう最近傍で間引く
+  if(mw * mh > 4000000){
+    const s = 2048 / Math.max(mw, mh);
+    const dw = Math.max(1, Math.round(mw * s)), dh = Math.max(1, Math.round(mh * s));
+    const down = new Float32Array(dw * dh);
+    for(let y = 0; y < dh; y++){
+      const syx = Math.min(mh - 1, Math.floor(y / dh * mh));
+      for(let x = 0; x < dw; x++){
+        const sxx = Math.min(mw - 1, Math.floor(x / dw * mw));
+        down[y * dw + x] = arr[syx * mw + sxx];
+      }
+    }
+    arr = down; mw = dw; mh = dh;
+  }
+  const N = mw * mh;
+  const p0 = pts[0];
+  const sx = Math.max(0, Math.min(mw-1, Math.round(p0[0]/W*(mw-1))));
+  const sy = Math.max(0, Math.min(mh-1, Math.round(p0[1]/H*(mh-1))));
+  const inv = arr[sy * mw + sx] < 0.5;
+  const sel = new Float32Array(N);
+  for(let i = 0; i < N; i++){
+    let v = arr[i]; if(inv) v = 1 - v;
+    sel[i] = smoothstepf(0.30, 0.70, v);
+  }
+  const cellAt = p => {
+    const gx = Math.max(0, Math.min(mw-1, Math.round(p[0]/W*(mw-1))));
+    const gy = Math.max(0, Math.min(mh-1, Math.round(p[1]/H*(mh-1))));
+    return gy * mw + gx;
+  };
+  // 百万セル規模になり得るので、キューは push 可変配列でなく事前確保の Int32Array（各セル最大1回enqueue）
+  const dist = new Int32Array(N).fill(-1);
+  const queue = new Int32Array(N);
+  let qHead = 0, qTail = 0;
+  for(const p of pts){ const vi = cellAt(p); if(sel[vi] > 0.15 && dist[vi] < 0){ dist[vi] = 0; queue[qTail++] = vi; } }
+  const seeded = qTail > 0;
+  while(qHead < qTail){
+    const k = queue[qHead++]; const d = dist[k] + 1;
+    const x = k % mw, y = (k - x) / mw;
+    if(x > 0    && dist[k-1]  < 0 && sel[k-1]  > 0.12){ dist[k-1]  = d; queue[qTail++] = k-1; }
+    if(x < mw-1 && dist[k+1]  < 0 && sel[k+1]  > 0.12){ dist[k+1]  = d; queue[qTail++] = k+1; }
+    if(y > 0    && dist[k-mw] < 0 && sel[k-mw] > 0.12){ dist[k-mw] = d; queue[qTail++] = k-mw; }
+    if(y < mh-1 && dist[k+mw] < 0 && sel[k+mw] > 0.12){ dist[k+mw] = d; queue[qTail++] = k+mw; }
+  }
+  if(seeded) for(let k = 0; k < N; k++) if(dist[k] < 0) sel[k] = 0;
+  const spread = sl("aiTh");
+  if(seeded && spread < 0.97){
+    const maxH = mw + mh;                  // 頂点格子単位(cols+rows)→マスク格子単位に換算
+    const radius = 2 + spread * spread * maxH;
+    const feather = Math.max(2, radius * 0.35);
+    for(let k = 0; k < N; k++){
+      if(sel[k] <= 0) continue;
+      let f = (radius - dist[k]) / feather; f = Math.max(0, Math.min(1, f));
+      sel[k] *= f * f * (3 - 2 * f);
+    }
+  }
+  let hit = 0;
+  for(let k = 0; k < N; k++){ if(sel[k] > 0.5) hit++; }
+  return {sel, mw, mh, hit};
+}
+// auto=true: 画像読込時の自動選択。解析中ヒントを出さず、結果を onAutoAIResult() へ渡す。
+function aiPick(pts, auto){
+  if(!srcCanvas || aiBusy) return;
+  if(!segmenter){
+    if(!auto){ setHint(t(aiLoading ? "hint.aiWait" : "hint.aiStart")); loadSegmenter(); }
+    return;
+  }
+  aiBusy = true;
+  if(!auto) setHint(t("hint.aiBusy"));
+  const roi = pts.length >= 4
+    ? {scribble: pts.map(p => ({x: p[0]/W, y: p[1]/H}))}
+    : {keypoint: {x: pts[0][0]/W, y: pts[0][1]/H}};
+  try{
+    segmenter.segment(srcCanvas, roi, res => {
+      const cm = res.confidenceMasks && res.confidenceMasks[0];
+      if(!cm){ aiBusy = false; if(auto){ onAutoAIResult(null); } else setHint(t("hint.aiNoPick")); return; }
+      const r = maskToSelection(cm, pts);
+      aiBusy = false;
+      if(auto){ onAutoAIResult(r); return; }
+      // 手動選択（ゆれ設定のAI選択タップ/なぞり）: 選択中レイヤーへ addMode で反映
+      const L = layers[activeLayer];
+      blitGridToLayer(L, r.sel, r.mw, r.mh, aiAddMode);
+      syncVertexCacheFromCanvas(L, {x:0, y:0, w:W, h:H});
+      syncActiveMaskTexture();
+      rebuildBlend();
+      userTouchedMask = true;   // 手動選択はユーザー操作
+      // AI選択はどこでも変化しうるので全体を1つのアンドゥ単位として記録
+      if(aiUndoBefore && aiUndoLayer === L) pushUndoEntry(L, {x0:0, y0:0, x1:W, y1:H}, aiUndoBefore);
+      aiUndoBefore = null;
+      if(r.hit === 0) setHint(t("hint.aiNoHit"));
+      else {
+        setHint(t("hint.aiApplied", {name: L.name}));
+        const s = Math.min(W, H);
+        for(let k = 0; k < nVerts; k++) vel[k*2+1] -= s * 0.9 * bAmp[k];
+      }
+    });
+  }catch(err){ console.error(err); aiBusy = false; if(auto){ onAutoAIResult(null); } else setHint(t("hint.aiError")); }
+}
+let aiUndoBefore = null, aiUndoLayer = null;
+
+// ============ 画像読込時の自動選択フロー（新規読込のみ・インポートは対象外）============
+// 成功時: 数秒で被写体を選び「ゆらす」へ。失敗/遅延時: 全面フェザーマスクで必ず即揺らせる。
+let imgGen = 0;                    // 画像世代トークン（新規読込/インポートで++）
+let userTouchedMask = false;       // 塗り/消し/手動AI選択/レイヤー操作が起きたか
+let autoFlow = null;               // 現在の自動選択フロー状態
+let pendingLateReplace = null;     // ポインタ押下中に届いた後着AI結果（pointerupで反映）
+const AUTO_T = 3000;               // フォールバックまでの待機（ms）
+const AUTO_LATE_MS = 15000;        // 後着AI差し替えの許容時間（ms）
+
+function beginAutoSelect(){
+  const gen = ++imgGen;
+  userTouchedMask = false;
+  pendingLateReplace = null;
+  autoFlow = {gen, t0: performance.now(), done: false, fallbackApplied: false, timer: 0};
+  setAutoOn(false); off.fill(0); vel.fill(0);   // 待機中は静止表示
+  document.body.style.cursor = "progress";       // PC向けローディング表示
+  setHint(t("hint.aiSelecting"));
+  const statusEl = document.getElementById("aiStatus");
+  if(statusEl){ statusEl.style.display = "block"; statusEl.textContent = t("hint.aiSelecting"); }
+  autoFlow.timer = setTimeout(() => {
+    if(autoFlow && autoFlow.gen === gen && !autoFlow.done && !autoFlow.fallbackApplied) applyFallbackMask(gen);
+  }, AUTO_T);
+  waitSegmenter(gen, ok => {
+    if(!autoFlow || autoFlow.gen !== gen) return;   // 別画像に差し替わった
+    if(ok && segmenter) aiPick([[W/2, H/2]], true); // 中央キーポイントで自動選択（auto）
+    else if(!autoFlow.done && !autoFlow.fallbackApplied) applyFallbackMask(gen);  // 失敗/オフライン→即フォールバック（エラー表示なし）
+  });
+}
+// モデル準備を待つ（成功で cb(true) / ロード失敗で cb(false)）。世代が変わったら黙って中断。
+function waitSegmenter(gen, cb){
+  if(segmenter){ cb(true); return; }
+  loadSegmenter(true);   // 自動選択フローのモデル読込は silent（メッセージ/エラー表示なし）
+  let tries = 0;
+  const iv = setInterval(() => {
+    if(!autoFlow || autoFlow.gen !== gen){ clearInterval(iv); return; }
+    if(segmenter){ clearInterval(iv); cb(true); }
+    else if(!aiLoading){ clearInterval(iv); cb(false); }        // ロード完了で segmenter 無し = 失敗
+    else if(++tries > 300){ clearInterval(iv); cb(!!segmenter); } // 15s cap
+  }, 50);
+}
+function endAutoLoadingUI(){
+  document.body.style.cursor = "";
+  const statusEl = document.getElementById("aiStatus");
+  if(statusEl && setupSub !== "ai") statusEl.style.display = "none";
+}
+// 選択配列を layers[0] に全置き換えで反映（通常のアンドゥ単位として記録可）
+function applyAutoSelection(sel, mw, mh, recordUndo){
+  const L = layers[0];
+  const before = recordUndo ? L.ctx.getImageData(0, 0, W, H) : null;
+  blitGridToLayer(L, sel, mw, mh, false);
+  syncVertexCacheFromCanvas(L, {x:0, y:0, w:W, h:H});
+  syncActiveMaskTexture();
+  rebuildBlend();
+  if(recordUndo && before) pushUndoEntry(L, {x0:0, y0:0, x1:W, y1:H}, before);
+}
+// 全面フェザーマスク（端ほど弱く、剥がれ・背景露出を抑える）
+function applyFallbackMask(gen){
+  if(!autoFlow || autoFlow.gen !== gen || autoFlow.done || autoFlow.fallbackApplied) return;
+  clearTimeout(autoFlow.timer);
+  // 長辺を256程度にしたグリッドで矩形距離フェザー
+  let gw, gh;
+  if(W >= H){ gw = 256; gh = Math.max(2, Math.round(256 * H / W)); }
+  else      { gh = 256; gw = Math.max(2, Math.round(256 * W / H)); }
+  const sel = new Float32Array(gw * gh);
+  const f = 0.18 * Math.min(gw, gh);
+  for(let y = 0; y < gh; y++) for(let x = 0; x < gw; x++){
+    const d = Math.min(x, y, gw - 1 - x, gh - 1 - y);
+    sel[y * gw + x] = smoothstepf(0, f, d);
+  }
+  applyAutoSelection(sel, gw, gh, true);
+  autoFlow.fallbackApplied = true;
+  endAutoLoadingUI();
+  setMode("play");                    // v0.15連動で自動ゆれON
+  setHint(t("hint.fullMaskApplied"));
+  // done にはしない: 後着AIで差し替え可能なまま（ガードを満たす時のみ）
+}
+// 自動選択の結果到着（成功=結果 / 失敗=null）
+function onAutoAIResult(result){
+  if(!autoFlow || autoFlow.gen !== imgGen) return;   // 別画像 → 破棄
+  const gen = autoFlow.gen;
+  const ok = result && result.hit > 0;
+  if(!autoFlow.fallbackApplied){
+    // まだT内。成功なら即適用してゆらすへ、失敗なら即フォールバック
+    if(ok){
+      clearTimeout(autoFlow.timer);
+      applyAutoSelection(result.sel, result.mw, result.mh, true);
+      autoFlow.done = true;
+      endAutoLoadingUI();
+      setMode("play");
+      setHint(t("hint.autoSelectedPlay"));
+    } else {
+      applyFallbackMask(gen);
+    }
+    return;
+  }
+  // フォールバック済みの後着AI。失敗なら黙って破棄
+  if(!ok) return;
+  maybeLateReplace(gen, result);
+}
+// 後着AIでフォールバックを差し替える（全ガードを満たす時のみ）
+function maybeLateReplace(gen, result){
+  if(!autoFlow || autoFlow.gen !== imgGen || gen !== imgGen) return;   // (a) 世代一致
+  if(userTouchedMask) return;                                         // (b) 未操作
+  if(performance.now() - autoFlow.t0 > AUTO_LATE_MS) return;          // (d) 15秒以内
+  if(press){ pendingLateReplace = {gen, result}; return; }            // (c) 押下中は pointerup まで遅延
+  applyAutoSelection(result.sel, result.mw, result.mh, true);
+  autoFlow.done = true;
+  setHint(t("hint.autoSelectedPlay"));
+}
+// pointerup 時: 押下中に保留した後着AI差し替えを実行
+function flushPendingLateReplace(){
+  if(!pendingLateReplace) return;
+  const {gen, result} = pendingLateReplace;
+  pendingLateReplace = null;
+  maybeLateReplace(gen, result);
+}
+// なぞった軌跡の可視化（AI選択のリアルタイムプレビュー代替: どこを指定したかだけでも見えるように）
+function positionAiTrailOverlay(){
+  const svg = document.getElementById("aiTrailSvg");
+  const stageRect = stage.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  svg.style.left = (canvasRect.left - stageRect.left) + "px";
+  svg.style.top = (canvasRect.top - stageRect.top) + "px";
+  svg.style.width = canvasRect.width + "px";
+  svg.style.height = canvasRect.height + "px";
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+}
+function updateAiTrail(){
+  const svg = document.getElementById("aiTrailSvg");
+  if(!aiPts || aiPts.length < 1){ svg.style.display = "none"; return; }
+  positionAiTrailOverlay();
+  svg.style.display = "block";
+  document.getElementById("aiTrailLine").setAttribute("points", aiPts.map(p => p[0]+","+p[1]).join(" "));
+}
+
+// ============ アンドゥ / リドゥ（マスク編集） ============
+// ストローク単位（pointerdown〜up）で、変更のあった矩形領域だけをスナップショット保存する
+const UNDO_MAX = 20;
+let undoStack = [], redoStack = [];
+function cropImageData(full, fullW, rect){
+  const out = new Uint8ClampedArray(rect.w * rect.h * 4);
+  for(let row = 0; row < rect.h; row++){
+    const srcStart = ((rect.y+row)*fullW + rect.x) * 4;
+    const dstStart = row * rect.w * 4;
+    out.set(full.data.subarray(srcStart, srcStart + rect.w*4), dstStart);
+  }
+  return out;
+}
+function pushUndoEntry(layer, rectXYXY, fullBefore){
+  const rect = clampRectXYXY(rectXYXY);
+  if(rect.w <= 0 || rect.h <= 0) return;
+  const data = cropImageData(fullBefore, W, rect);
+  undoStack.push({layer, rect, data});
+  if(undoStack.length > UNDO_MAX) undoStack.shift();
+  redoStack.length = 0;
+  updateUndoButtons();
+}
+function applyEntryAndSwap(fromStack, toStack){
+  const e = fromStack.pop();
+  if(!e) return;
+  if(layers.indexOf(e.layer) === -1) return applyEntryAndSwap(fromStack, toStack);   // 削除済みレイヤーはスキップ
+  const curData = e.layer.ctx.getImageData(e.rect.x, e.rect.y, e.rect.w, e.rect.h).data.slice();
+  toStack.push({layer:e.layer, rect:e.rect, data:curData});
+  if(toStack.length > UNDO_MAX) toStack.shift();
+  e.layer.ctx.putImageData(new ImageData(e.data, e.rect.w, e.rect.h), e.rect.x, e.rect.y);
+  syncVertexCacheFromCanvas(e.layer, e.rect);
+  if(layers[activeLayer] === e.layer) syncActiveMaskTexture();
+  rebuildBlend();
+  updateUndoButtons();
+}
+function doUndo(){ applyEntryAndSwap(undoStack, redoStack); }
+function doRedo(){ applyEntryAndSwap(redoStack, undoStack); }
+function updateUndoButtons(){
+  document.getElementById("bUndo").disabled = undoStack.length === 0;
+  document.getElementById("bRedo").disabled = redoStack.length === 0;
+}
+document.getElementById("bUndo").onclick = doUndo;
+document.getElementById("bRedo").onclick = doRedo;
+document.addEventListener("keydown", e => {
+  if(!(e.ctrlKey || e.metaKey)) return;
+  const k = e.key.toLowerCase();
+  if(k === "z" && !e.shiftKey){ e.preventDefault(); doUndo(); }
+  else if(k === "y" || (k === "z" && e.shiftKey)){ e.preventDefault(); doRedo(); }
+});
+// ツール切替ショートカット（ゆれ設定モード時のみ・PC想定）: B=塗る / E=消す / X=切替
+document.addEventListener("keydown", e => {
+  if(mode !== "setup") return;
+  if(e.ctrlKey || e.metaKey || e.altKey) return;
+  const el = e.target;
+  if(el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;  // 数値入力中などは無効
+  const k = e.key.toLowerCase();
+  if(k === "b") setSub("add");
+  else if(k === "e") setSub("erase");
+  else if(k === "x") setSub(setupSub === "add" ? "erase" : "add");
+});
+
+document.getElementById("bLiqClear").onclick = () => {
+  liqCtx.clearRect(0, 0, W, H); injectDirty = false;
+  for(const f of field.concat(wfield)){ gl.bindFramebuffer(gl.FRAMEBUFFER, f.fb); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT); }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null); fieldActive = false;
+};
+
+// ============ センサー（符号自動判定・重力反転廃止） ============
+let useAccel = false, useTilt = false, motionAttached = false;
+let sensorExciteEMA = 0;   // シェイク声用: 加速度の大きさのEMA
+// iOS/Android符号差はUAではなく requestPermission の有無で iOS を検出し内部吸収
+const IOS_FLIP = (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") ? -1 : 1;
+function attachMotion(){
+  if(motionAttached) return true;
+  motionAttached = true; sensorOn = true;
+  window.addEventListener("devicemotion", e => {
+    const a = e.acceleration;
+    if(useAccel && a){
+      const s = Math.min(W, H) * 3.2 * (0.4 + sl("sensV"));
+      extFX += -(a.x || 0) * s * 0.06;
+      extFY +=  (a.y || 0) * s * 0.06;
+      // シェイク声: 加速度の大きさのEMAを excite に流用（止めると自然に0へ）
+      const mag = Math.hypot(a.x || 0, a.y || 0);
+      sensorExciteEMA = sensorExciteEMA * 0.8 + Math.min(1, mag / 12) * 0.2;
+      se.excite(sensorExciteEMA);
+    }
+    const ag = e.accelerationIncludingGravity;
+    if(useTilt && ag && (ag.x || ag.y)){
+      const gx = IOS_FLIP * -(ag.x || 0) / 9.81;
+      const gy = IOS_FLIP *  (ag.y || 0) / 9.81;
+      const len = Math.hypot(gx, gy);
+      if(len > 0.25){ gravX = gx / Math.max(1, len); gravY = gy / Math.max(1, len); }
+    }
+  });
+  return true;
+}
+async function ensureMotionPermission(){
+  if(typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function"){
+    try{ const r = await DeviceMotionEvent.requestPermission(); if(r !== "granted") return false; }catch(_){ return false; }
+  }
+  return attachMotion();
+}
+document.getElementById("bAccel").onclick = async e => {
+  if(!useAccel){ if(!await ensureMotionPermission()){ setHint(t("hint.noSensor")); return; } }
+  useAccel = !useAccel;
+  if(!useAccel){ sensorExciteEMA = 0; se.excite(0); }   // オフ時はシェイク声を止める
+  setToggle(e.target, "play.accel", useAccel);
+};
+document.getElementById("bTilt").onclick = async e => {
+  if(!useTilt){ if(!await ensureMotionPermission()){ setHint(t("hint.noSensor")); return; } }
+  useTilt = !useTilt;
+  setToggle(e.target, "liq.tilt", useTilt);
+};
+
+// ============ パッド操作（PC向け疑似加速度センサー） ============
+// パッド上のドラッグを「入れ物を振り回す」動きとして扱い、位置ではなく加速度をextFX/extFYへ流す
+// （実センサーの devicemotion と同じ入力経路）。ノブは戻さなくてよい。
+(function(){
+  const padArea = document.getElementById("padArea");
+  const padKnob = document.getElementById("padKnob");
+  let padPrev = null, padLastT = 0, padLastVX = 0, padLastVY = 0, padExciteEMA = 0;
+  function padMoveKnob(px, py){
+    const r = padArea.getBoundingClientRect();
+    const x = Math.max(0, Math.min(r.width, px - r.left));
+    const y = Math.max(0, Math.min(r.height, py - r.top));
+    padKnob.style.left = x + "px"; padKnob.style.top = y + "px";
+    return {x, y};
+  }
+  padArea.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    try{ padArea.setPointerCapture(e.pointerId); }catch(_){ }
+    padPrev = padMoveKnob(e.clientX, e.clientY);
+    padLastT = performance.now();
+    padLastVX = 0; padLastVY = 0;
+  });
+  padArea.addEventListener("pointermove", e => {
+    if(!padPrev) return;
+    const now = performance.now();
+    const dt = Math.max(0.001, (now - padLastT) / 1000);
+    const cur = padMoveKnob(e.clientX, e.clientY);
+    const vx = (cur.x - padPrev.x) / dt, vy = (cur.y - padPrev.y) / dt;
+    const ax = (vx - padLastVX) / dt, ay = (vy - padLastVY) / dt;
+    const s = Math.min(W, H) * 0.00035;   // 感触は要調整の目安値
+    extFX += ax * s; extFY += ay * s;
+    padLastVX = vx; padLastVY = vy;
+    padPrev = cur; padLastT = now;
+    // シェイク声: ドラッグ速度のEMAを excite に流用
+    padExciteEMA = padExciteEMA * 0.7 + Math.min(1, Math.hypot(vx, vy) / 2500) * 0.3;
+    se.excite(padExciteEMA);
+  });
+  function padEnd(){ padPrev = null; padLastVX = 0; padLastVY = 0; padExciteEMA = 0; se.excite(0); }
+  padArea.addEventListener("pointerup", padEnd);
+  padArea.addEventListener("pointercancel", padEnd);
+  padArea.addEventListener("pointerleave", e => { if(e.buttons === 0) padEnd(); });
+})();
+
+// ============ 録画（3/5/10秒・カウントダウン・MP4判定・クロップ・透かし） ============
+let recorder = null, recChunks = [], recCanvas = null, recCtx = null;
+let recTimer = 0, watermark = false, cropRec = false, recExt = "webm";
+const bRec = document.getElementById("bRec");
+const bFsRec = document.getElementById("bFsRec");
+const recDot = document.getElementById("recDot");
+const countdownEl = document.getElementById("countdown");
+function drawWatermark(ctx){
+  const w = recCanvas.width, h = recCanvas.height;
+  const fs = Math.max(12, Math.round(Math.min(w, h) * 0.038));
+  ctx.font = fs + 'px "Hiragino Kaku Gothic ProN",Meiryo,"MS UI Gothic",sans-serif';
+  ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+  const tx = w - fs * 0.5, ty = h - fs * 0.4;
+  ctx.lineWidth = Math.max(2, fs * 0.16);
+  ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.strokeText("ぷりんあらも〜ど", tx, ty);
+  ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.fillText("ぷりんあらも〜ど", tx, ty);
+}
+function pickMime(){
+  // 音声込みコーデックを優先し、全滅なら映像のみへフォールバック。
+  // ※ mp4+AAC は短縮形 "avc1,mp4a" だと isTypeSupported が false を返す実装があるため、
+  //   完全修飾形（avc1.42E01E=H.264 Baseline / mp4a.40.2=AAC-LC）を先に試す。
+  const cands = [
+    "video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=avc1.4D401E,mp4a.40.2", "video/mp4;codecs=avc1,mp4a",
+    "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus",
+    "video/mp4;codecs=avc1.42E01E", "video/mp4;codecs=avc1",
+    "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"
+  ];
+  for(const m of cands){ if(MediaRecorder.isTypeSupported(m)){ recExt = m.indexOf("mp4") >= 0 ? "mp4" : "webm"; return m; } }
+  recExt = "webm"; return "";
+}
+function countdown(n){
+  return new Promise(resolve => {
+    countdownEl.style.display = "flex";
+    const tick = () => {
+      if(n <= 0){ countdownEl.style.display = "none"; resolve(); return; }
+      countdownEl.textContent = n; n--; setTimeout(tick, 700);
+    };
+    tick();
+  });
+}
+// 録画ボタンのラベルを現在の状態＋現在の言語で作り直す（言語切替時にも呼ぶ）
+function updateRecButtons(){
+  const rec = !!recorder;
+  bRec.classList.toggle("rec", rec);
+  bFsRec.classList.toggle("rec", rec);
+  bRec.textContent = rec ? t("rec.btnRecording") : t("rec.btn");
+  bFsRec.textContent = rec ? t("rec.btnStop") : t("rec.btn");
+}
+async function startRec(){
+  if(recorder) return;
+  if(typeof MediaRecorder === "undefined" || !canvas.captureStream){ setHint(t("hint.noRec")); return; }
+  await countdown(3);
+  recCanvas = document.createElement("canvas");
+  const inset = cropRec ? 0.09 : 0;
+  recCanvas.width = Math.round(W * (1 - inset * 2));
+  recCanvas.height = Math.round(H * (1 - inset * 2));
+  recCtx = recCanvas.getContext("2d");
+  const stream = recCanvas.captureStream(60);
+  ensureAudio();
+  // SE音声トラックを合成（対応環境のみ）
+  if(recDest && recDest.stream.getAudioTracks().length){
+    try{ stream.addTrack(recDest.stream.getAudioTracks()[0]); }catch(_){ }
+  }
+  const mime = pickMime();
+  recChunks = [];
+  try{ recorder = new MediaRecorder(stream, mime ? {mimeType: mime} : undefined); }
+  catch(err){
+    console.error(err);
+    // 音声込みで失敗 → 音声トラックを外して映像のみで再試行（エラーにしない）
+    const at = stream.getAudioTracks()[0]; if(at){ try{ stream.removeTrack(at); }catch(_){ } }
+    try{ recorder = new MediaRecorder(stream, mime ? {mimeType: mime} : undefined); }
+    catch(err2){ console.error(err2); setHint(t("hint.recFail")); recorder = null; return; }
+  }
+  recorder.ondataavailable = e => { if(e.data && e.data.size) recChunks.push(e.data); };
+  recorder.onstop = finishRec;
+  recorder.start(200);
+  updateRecButtons();
+  recDot.style.display = "flex";
+  const secs = parseInt(document.getElementById("recSec").value, 10) || 5;
+  recTimer = setTimeout(stopRec, secs * 1000);
+  setHint(t("hint.recording", {s: secs}));
+}
+function stopRec(){
+  if(!recorder) return;
+  clearTimeout(recTimer);
+  const r = recorder; recorder = null;
+  updateRecButtons();
+  recDot.style.display = "none";
+  try{ r.stop(); }catch(_){ }
+}
+async function finishRec(){
+  if(!recChunks.length){ setHint(t("hint.recEmpty")); return; }
+  const type = recExt === "mp4" ? "video/mp4" : "video/webm";
+  const blob = new Blob(recChunks, {type}); recChunks = [];
+  const fname = "purin." + recExt;
+  // 常にダウンロード（デスクトップ／モバイル問わず保存できるように）
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+  setHint(t("hint.recSaved", {f: fname}));
+  // 共有できる環境なら共有シートも出す（共有タイトルはブランド名なので翻訳しない）
+  const file = new File([blob], fname, {type});
+  if(navigator.canShare && navigator.canShare({files: [file]})){
+    try{ await navigator.share({files: [file], title: "ぷりんあらも〜ど"}); setHint(t("hint.recShared")); }catch(_){ }
+  }
+}
+bRec.addEventListener("click", () => { recorder ? stopRec() : startRec(); });
+bFsRec.addEventListener("click", () => { recorder ? stopRec() : startRec(); });
+document.getElementById("bWM").onclick = e => {
+  watermark = !watermark;
+  setToggle(e.target, "rec.wm", watermark);
+};
+document.getElementById("bCrop").onclick = e => {
+  cropRec = !cropRec;
+  setToggle(e.target, "rec.crop", cropRec);
+};
+
+// ============ 表示（拡縮・移動）＋フル画面プレビュー ============
+let fsOn = false, gesturing = false, panning = null;
+let viewScale = 1, viewX = 0, viewY = 0, fsBaseScale = 1;
+const fsLayer = document.getElementById("fsLayer");
+const stage = document.getElementById("stage");
+// フル画面では viewScale=1 を「画面に収まる最大表示（contain-fit）」の基準（100%）とする
+function computeFsBaseScale(){
+  if(!fsOn){ fsBaseScale = 1; return; }
+  fsBaseScale = Math.min(window.innerWidth / W, window.innerHeight / H);
+}
+function applyView(){
+  const effScale = viewScale * (fsOn ? fsBaseScale : 1);
+  const base = fsOn ? "translate(-50%,-50%) " : "";
+  const t = base + "translate(" + viewX + "px," + viewY + "px) scale(" + effScale + ")";
+  canvas.style.transform = (!fsOn && viewScale === 1 && viewX === 0 && viewY === 0) ? "" : t;
+  const p = document.getElementById("zoomPct"); if(p) p.textContent = Math.round(viewScale * 100) + "%";
+}
+function zoomBy(factor){ viewScale = Math.max(0.4, Math.min(8, viewScale * factor)); applyView(); }
+function resetView(){ viewScale = 1; viewX = 0; viewY = 0; applyView(); }
+function startPan(e){ panning = {x: e.clientX, y: e.clientY, vx: viewX, vy: viewY}; try{ canvas.setPointerCapture(e.pointerId); }catch(_){ } }
+function enterFs(){
+  setMode("play");   // フル画面はまず「ゆらす」から（項2により自動ゆれも連動ON）
+  fsOn = true; document.body.classList.add("fs");
+  computeFsBaseScale();
+  viewScale = 1; viewX = 0; viewY = 0;
+  fsLayer.insertBefore(canvas, fsLayer.firstChild);
+  applyView();
+}
+function exitFs(){
+  fsOn = false; document.body.classList.remove("fs");
+  fsBaseScale = 1; viewScale = 1; viewX = 0; viewY = 0;
+  stage.insertBefore(canvas, stage.firstChild);
+  applyView();
+}
+window.addEventListener("resize", () => { if(fsOn){ computeFsBaseScale(); applyView(); } });
+// デスクトップ3カラム時、中央カラムの高さをモード列（常に最大パネル分で一定）に明示的に揃える。
+// CSS Gridの auto 行サイズは「内容の最大希望サイズ」で決まるため、キャンバスの内在サイズが
+// 逆流して行の高さを押し広げてしまう（circular）ことがある。JSで実測pxを直接指定して確実に一致させる。
+const colCenterEl = document.querySelector(".colCenter");
+const colModeEl = document.querySelector(".colMode");
+function syncCenterHeight(){
+  if(window.matchMedia("(min-width:860px)").matches){
+    const h = colModeEl.getBoundingClientRect().height;
+    if(h > 0) colCenterEl.style.height = h + "px";
+  } else {
+    colCenterEl.style.height = "";
+  }
+}
+window.addEventListener("resize", syncCenterHeight);
+// 初回表示時にフォントのメトリクスが確定するとcolModeの高さが後から変わり、最初に測った
+// colCenterの高さとズレて下に隙間ができることがある。フォント確定時とページ完全読み込み時に
+// 再同期して防ぐ（システムフォントのみなので通常は即解決）。
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(syncCenterHeight).catch(() => {});
+window.addEventListener("load", syncCenterHeight);
+document.getElementById("bFull").onclick = enterFs;
+document.getElementById("bFsBack").onclick = exitFs;
+// フル画面中のモード切替（押下状態の同期は setMode 内で行う）
+document.getElementById("bFsPlay").onclick   = () => setMode("play");
+document.getElementById("bFsLiquid").onclick = () => setMode("liquid");
+document.getElementById("bZoomIn").onclick = () => zoomBy(1.25);
+document.getElementById("bZoomOut").onclick = () => zoomBy(0.8);
+document.getElementById("bZoomReset").onclick = resetView;
+// 2本指ピンチ/パン（通常プレビュー・フル画面 共通）
+const gPointers = new Map();
+let pinchStart = null;
+function gDown(e){
+  if(e.target.tagName === "BUTTON") return;
+  gPointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if(gPointers.size === 2){
+    gesturing = true; press = null; panning = null;
+    const p = [...gPointers.values()];
+    pinchStart = {dist: Math.hypot(p[0].x-p[1].x, p[0].y-p[1].y), cx:(p[0].x+p[1].x)/2, cy:(p[0].y+p[1].y)/2, scale:viewScale, x:viewX, y:viewY};
+  }
+}
+function gMove(e){
+  if(!gPointers.has(e.pointerId)) return;
+  gPointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if(gesturing && gPointers.size === 2 && pinchStart){
+    const p = [...gPointers.values()];
+    const dist = Math.hypot(p[0].x-p[1].x, p[0].y-p[1].y);
+    const cx = (p[0].x+p[1].x)/2, cy = (p[0].y+p[1].y)/2;
+    viewScale = Math.max(0.4, Math.min(8, pinchStart.scale * dist / Math.max(1, pinchStart.dist)));
+    viewX = pinchStart.x + (cx - pinchStart.cx);
+    viewY = pinchStart.y + (cy - pinchStart.cy);
+    applyView();
+  }
+}
+function gUp(e){
+  gPointers.delete(e.pointerId);
+  if(gPointers.size < 2){ pinchStart = null; if(gPointers.size === 0) gesturing = false; }
+}
+for(const el of [stage, fsLayer]){
+  el.addEventListener("pointerdown", gDown);
+  el.addEventListener("pointermove", gMove);
+  el.addEventListener("pointerup", gUp);
+  el.addEventListener("pointercancel", gUp);
+  el.addEventListener("wheel", e => { e.preventDefault(); zoomBy(Math.exp(-e.deltaY * 0.0015)); }, {passive: false});
+}
+
+// ============ ヘルプ ============
+const helpWin = document.getElementById("helpWin");
+const btnHelp = document.getElementById("btnHelp");
+function openHelp(){ helpWin.classList.add("show"); btnHelp.classList.remove("hl"); try{ localStorage.setItem("pp_help_seen", "1"); }catch(_){ } }
+btnHelp.onclick = openHelp;
+document.getElementById("bHelpClose").onclick = () => helpWin.classList.remove("show");
+try{ if(!localStorage.getItem("pp_help_seen")) btnHelp.classList.add("hl"); }catch(_){ }
+// タイトルバーを掴んでのウィンドウ移動（ヘルプ / 物理説明で共用）
+function makeDraggableWin(win){
+  const title = win.querySelector(".htitle");
+  let drag = null;
+  title.addEventListener("pointerdown", e => {
+    if(e.target.classList.contains("wbtn")) return;
+    win.style.transform = "none";
+    const r = win.getBoundingClientRect();
+    drag = {dx: e.clientX - r.left, dy: e.clientY - r.top};
+    win.style.left = r.left + "px"; win.style.top = r.top + "px";
+    try{ title.setPointerCapture(e.pointerId); }catch(_){ }
+    e.preventDefault();
+  });
+  title.addEventListener("pointermove", e => {
+    if(!drag) return;
+    win.style.left = Math.max(0, Math.min(window.innerWidth - 60, e.clientX - drag.dx)) + "px";
+    win.style.top  = Math.max(0, Math.min(window.innerHeight - 24, e.clientY - drag.dy)) + "px";
+  });
+  const end = () => { drag = null; };
+  title.addEventListener("pointerup", end);
+  title.addEventListener("pointercancel", end);
+}
+makeDraggableWin(helpWin);
+// 「選択中レイヤーの物理」の項目説明（ヘルプ本体とは独立に開閉できる）
+const physHelpWin = document.getElementById("physHelpWin");
+document.getElementById("btnPhysHelp").onclick = () => physHelpWin.classList.add("show");
+document.getElementById("bPhysHelpClose").onclick = () => physHelpWin.classList.remove("show");
+makeDraggableWin(physHelpWin);
+
+// ============ PWA ============
+if("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+
+// ============ 効果音（Web Audio 全合成・音源ファイルなし）============
+// 物理量に連動するパラメトリック音。全ボイスは master 経由（録画合成と音量制御を一元化）。
+// 物理側からの依存は se.* トリガ関数の呼び出しのみ。SEオフ時は各関数の先頭で早期return。
+let actx = null, master = null, recDest = null, noiseBuf = null;
+let seOn = true, seVolume = 0.5;
+try{ const v = localStorage.getItem("purin.seOn");  if(v !== null) seOn = v === "1"; }catch(_){ }
+try{ const v = localStorage.getItem("purin.seVol"); if(v !== null){ const n = parseFloat(v); if(!isNaN(n)) seVolume = Math.max(0, Math.min(1, n)); } }catch(_){ }
+
+function makeNoiseBuffer(){
+  const len = actx.sampleRate * 2;                 // 2秒（単発/ループ共用）
+  const b = actx.createBuffer(1, len, actx.sampleRate);
+  const d = b.getChannelData(0);
+  for(let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  return b;
+}
+function noiseSource(loop){ const n = actx.createBufferSource(); n.buffer = noiseBuf; n.loop = !!loop; return n; }
+
+// 常設ボイス（生成/破棄を繰り返さずゲインだけで開閉）
+let pourGainNode = null;                            // 注ぎループ
+let shakeGainNode = null, shakeVibLFO = null;       // シェイク声
+let shakeLastTarget = 0, shakePrevExcite = 0, shakeAccentT = 0;
+function initPourVoice(){
+  const src = noiseSource(true);
+  const lp = actx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 800;
+  const trem = actx.createGain(); trem.gain.value = 1;      // 3Hz振幅ゆらぎ
+  const lfo = actx.createOscillator(); lfo.type = "sine"; lfo.frequency.value = 3;
+  const lfoG = actx.createGain(); lfoG.gain.value = 0.12;
+  lfo.connect(lfoG); lfoG.connect(trem.gain);
+  pourGainNode = actx.createGain(); pourGainNode.gain.value = 0.0001;
+  src.connect(lp).connect(trem).connect(pourGainNode).connect(master);
+  src.start(); lfo.start();
+}
+function initShakeVoice(){
+  const osc = actx.createOscillator(); osc.type = "triangle"; osc.frequency.value = 180;
+  const n = noiseSource(true);
+  const lp = actx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 400;
+  const nGain = actx.createGain(); nGain.gain.value = 0.5;
+  const mix = actx.createGain(); mix.gain.value = 1;
+  osc.connect(mix); n.connect(lp).connect(nGain).connect(mix);
+  shakeVibLFO = actx.createOscillator(); shakeVibLFO.type = "sine"; shakeVibLFO.frequency.value = 5;
+  const vibG = actx.createGain(); vibG.gain.value = 8;      // ±8Hz ビブラート
+  shakeVibLFO.connect(vibG); vibG.connect(osc.frequency);
+  shakeGainNode = actx.createGain(); shakeGainNode.gain.value = 0.0001;
+  mix.connect(shakeGainNode).connect(master);
+  osc.start(); n.start(); shakeVibLFO.start();
+}
+function ensureAudio(){
+  if(!actx){
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    try{ actx = new AC(); }catch(_){ actx = null; return; }
+    master = actx.createGain();
+    master.gain.value = seOn ? seVolume : 0;
+    master.connect(actx.destination);
+    try{ recDest = actx.createMediaStreamDestination(); master.connect(recDest); }catch(_){ recDest = null; }
+    noiseBuf = makeNoiseBuffer();
+    initPourVoice();
+    initShakeVoice();
+  }
+  if(actx.state === "suspended") actx.resume().catch(() => {});
+}
+function applySeGain(){
+  if(!actx) return;
+  master.gain.setTargetAtTime(seOn ? seVolume : 0, actx.currentTime, 0.02);   // ブツッと切れないように
+}
+
+// ボヨンの同時発音は2ボイスまで（3発目で最古を30msフェード）
+let boingVoices = [];
+function registerBoingVoice(gainNode, endT){
+  const now = actx.currentTime;
+  boingVoices.push({g: gainNode, end: endT});
+  boingVoices = boingVoices.filter(v => v.end > now - 0.05);
+  while(boingVoices.length > 2){
+    const old = boingVoices.shift();
+    try{ old.g.gain.cancelScheduledValues(now); old.g.gain.setTargetAtTime(0.0001, now, 0.01); }catch(_){ }
+  }
+}
+function accentBoing(){   // シェイクのピークアクセント（高め・小さめのボヨン変種）
+  if(!seOn || !actx) return;
+  const t0 = actx.currentTime;
+  const o = actx.createOscillator(); o.type = "triangle";
+  o.frequency.setValueAtTime(500, t0); o.frequency.exponentialRampToValueAtTime(260, t0 + 0.12);
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(0.08, t0 + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+  o.connect(g).connect(master);
+  o.start(t0); o.stop(t0 + 0.14);
+}
+
+// ゆれの音「アッフン」の合成パラメータ（se-lab.html の調整ツールで確定）。将来ゆれSE選択化する際は
+// この形のプリセットを複数持てばよい。時間はms、ピッチは base 倍率、音量は 0〜1。
+const AHUN = {
+  base:348, baseDrop:27, wave:"sawtooth", peak:0.14, peakStr:0.20,
+  attMs:78, gapMs:54, hunMs:338,
+  attMul:1.37, dipMul:0.73, hunStartMul:1.08, hunEndMul:2.18,
+  dipGain:0, hunGain:0.66, tailGain:0.15,
+  f1a:700, f1b:490, f2a:1360, f2b:1400,
+  vibRate:4.1, vibDepth:0.015, breath:0.055, breathF:3200
+};
+
+// ゆれSEプリセット群。各関数は (strength 0..1, pitchBias, vol 0..1) を受け、master へ流し2ボイス管理する。
+function boingAhun(s, pb, vol){
+  const c = AHUN;
+  const t0 = actx.currentTime;
+  const base = (c.base - c.baseDrop * s) * (1 + pb);
+  const att = c.attMs/1000, gap = c.gapMs/1000, hun = c.hunMs/1000, dur = att + gap + hun;
+  const tAttPeak = t0 + att*0.35, tAttEnd = t0 + att, tGapEnd = t0 + att + gap, tEnd = t0 + dur;
+  const src = actx.createOscillator(); src.type = c.wave;
+  src.frequency.setValueAtTime(base * 0.95, t0);
+  src.frequency.linearRampToValueAtTime(base * c.attMul, tAttPeak);
+  src.frequency.linearRampToValueAtTime(base * c.dipMul, tAttEnd);
+  src.frequency.linearRampToValueAtTime(base * c.dipMul, tGapEnd);
+  src.frequency.setValueAtTime(base * c.hunStartMul, tGapEnd);
+  src.frequency.linearRampToValueAtTime(base * c.hunEndMul, tEnd);
+  if(c.vibDepth > 0){
+    const v = actx.createOscillator(); v.type = "sine"; v.frequency.value = c.vibRate;
+    const vg = actx.createGain(); vg.gain.value = base * c.vibDepth;
+    v.connect(vg); vg.connect(src.frequency); v.start(t0); v.stop(tEnd + 0.05);
+  }
+  const f1 = actx.createBiquadFilter(); f1.type = "bandpass"; f1.Q.value = 6;
+  f1.frequency.setValueAtTime(c.f1a, t0); f1.frequency.exponentialRampToValueAtTime(c.f1b, tEnd);
+  const f2 = actx.createBiquadFilter(); f2.type = "bandpass"; f2.Q.value = 9;
+  f2.frequency.setValueAtTime(c.f2a, t0); f2.frequency.exponentialRampToValueAtTime(c.f2b, tEnd);
+  const f1g = actx.createGain(); const f2g = actx.createGain(); f2g.gain.value = 0.6;
+  const out = actx.createGain(); const peak = (c.peak + c.peakStr * s) * vol; const g = out.gain;
+  g.setValueAtTime(0.0001, t0);
+  g.exponentialRampToValueAtTime(peak, t0 + Math.min(0.02, att*0.5));
+  g.exponentialRampToValueAtTime(Math.max(0.0001, peak*c.dipGain), t0 + att + gap*0.5);
+  g.exponentialRampToValueAtTime(Math.max(0.0001, peak*c.hunGain), tGapEnd + hun*0.45);
+  g.exponentialRampToValueAtTime(Math.max(0.0001, peak*c.tailGain), t0 + dur*0.9);
+  g.exponentialRampToValueAtTime(0.0001, tEnd);
+  src.connect(f1).connect(f1g).connect(out); src.connect(f2).connect(f2g).connect(out); out.connect(master);
+  src.start(t0); src.stop(tEnd + 0.05);
+  if(c.breath * vol > 0.0002){
+    const br = noiseSource(false);
+    const bp = actx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = c.breathF; bp.Q.value = 0.8;
+    const bg = actx.createGain(); const bt = tGapEnd;
+    bg.gain.setValueAtTime(0.0001, bt);
+    bg.gain.exponentialRampToValueAtTime(c.breath * vol, bt + 0.02);
+    bg.gain.exponentialRampToValueAtTime(0.0001, bt + Math.min(hun*0.5, 0.08));
+    br.connect(bp).connect(bg).connect(master); br.start(bt); br.stop(bt + 0.2);
+  }
+  registerBoingVoice(out, tEnd + 0.05);
+}
+// 定番の「ボヨン」（三角波＋第2倍音＋ビブラート）
+function boingClassic(s, pb, vol){
+  const bias = 1 + pb, t0 = actx.currentTime, dur = 0.35;
+  const f0 = (340 - 160*s) * bias, f1 = f0 * 0.45;
+  const out = actx.createGain();
+  out.gain.setValueAtTime(0.0001, t0);
+  out.gain.exponentialRampToValueAtTime((0.10 + 0.25*s) * vol, t0 + 0.008);
+  out.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  out.connect(master);
+  const o1 = actx.createOscillator(); o1.type = "triangle"; o1.frequency.setValueAtTime(f0, t0); o1.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+  const o2 = actx.createOscillator(); o2.type = "triangle"; o2.frequency.setValueAtTime(f0*2, t0); o2.frequency.exponentialRampToValueAtTime(f1*2, t0 + dur);
+  const g2 = actx.createGain(); g2.gain.value = 0.25;
+  const lfo = actx.createOscillator(); lfo.type = "sine"; lfo.frequency.setValueAtTime(12, t0); lfo.frequency.exponentialRampToValueAtTime(6, t0 + dur);
+  const lg = actx.createGain(); lg.gain.setValueAtTime(f0*0.06, t0); lg.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  lfo.connect(lg); lg.connect(o1.frequency); lg.connect(o2.frequency);
+  o1.connect(out); o2.connect(g2).connect(out);
+  o1.start(t0); o2.start(t0); lfo.start(t0); o1.stop(t0 + dur); o2.stop(t0 + dur); lfo.stop(t0 + dur);
+  registerBoingVoice(out, t0 + dur);
+}
+// やわらかい「ぽよん」（サイン2本・短め）
+function boingPoyon(s, pb, vol){
+  const bias = 1 + pb, t0 = actx.currentTime, dur = 0.22;
+  const f0 = (420 - 140*s) * bias;
+  const o = actx.createOscillator(); o.type = "sine"; o.frequency.setValueAtTime(f0*1.4, t0); o.frequency.exponentialRampToValueAtTime(f0*0.7, t0 + dur);
+  const o2 = actx.createOscillator(); o2.type = "sine"; o2.frequency.setValueAtTime(f0*2.8, t0); o2.frequency.exponentialRampToValueAtTime(f0*1.4, t0 + dur);
+  const g2 = actx.createGain(); g2.gain.value = 0.15;
+  const out = actx.createGain();
+  out.gain.setValueAtTime(0.0001, t0);
+  out.gain.exponentialRampToValueAtTime((0.14 + 0.22*s) * vol, t0 + 0.006);
+  out.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(out); o2.connect(g2).connect(out); out.connect(master);
+  o.start(t0); o2.start(t0); o.stop(t0 + dur); o2.stop(t0 + dur);
+  registerBoingVoice(out, t0 + dur);
+}
+// ばね感の「びよーん」（長めの下降スライド＋ゆらぎ）
+function boingBiyon(s, pb, vol){
+  const bias = 1 + pb, t0 = actx.currentTime, dur = 0.5;
+  const f0 = (300 - 120*s) * bias;
+  const o = actx.createOscillator(); o.type = "sawtooth";
+  o.frequency.setValueAtTime(f0*1.6, t0); o.frequency.exponentialRampToValueAtTime(f0*0.7, t0 + dur);
+  const lfo = actx.createOscillator(); lfo.type = "sine"; lfo.frequency.value = 9;
+  const lg = actx.createGain(); lg.gain.setValueAtTime(f0*0.12, t0); lg.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  lfo.connect(lg); lg.connect(o.frequency);
+  const lp = actx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.setValueAtTime(2200, t0); lp.frequency.exponentialRampToValueAtTime(600, t0 + dur);
+  const out = actx.createGain();
+  out.gain.setValueAtTime(0.0001, t0);
+  out.gain.exponentialRampToValueAtTime((0.10 + 0.20*s) * vol, t0 + 0.01);
+  out.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(lp).connect(out); out.connect(master);
+  o.start(t0); lfo.start(t0); o.stop(t0 + dur); lfo.stop(t0 + dur);
+  registerBoingVoice(out, t0 + dur);
+}
+const BOING_SYNTHS = { ahun:boingAhun, boyon:boingClassic, poyon:boingPoyon, biyon:boingBiyon };
+let sePreset = "ahun";
+try{ const v = localStorage.getItem("purin.sePreset"); if(v && BOING_SYNTHS[v]) sePreset = v; }catch(_){ }
+
+const se = {
+  // 押し込み「むにゅ」: ノイズ→ローパス 1200→300Hz を60msスイープ
+  press(depth){
+    if(!seOn || !actx) return;
+    const t0 = actx.currentTime;
+    const src = noiseSource(false);
+    const lp = actx.createBiquadFilter(); lp.type = "lowpass";
+    lp.frequency.setValueAtTime(1200, t0);
+    lp.frequency.exponentialRampToValueAtTime(300, t0 + 0.06);
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.12, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.065);
+    src.connect(lp).connect(g).connect(master);
+    src.start(t0); src.stop(t0 + 0.09);
+  },
+  // ゆれの音: 現在選択中のプリセット（アッフン等）へ委譲。
+  // strength=強さ / pitchBias=移調（縦-0.15/横+0.15）/ gain=地点の揺れ量に比例した音量（0で無音）。
+  boing(strength, pitchBias, gain){
+    if(!seOn || !actx) return;
+    const vol = gain == null ? 1 : Math.max(0, Math.min(1, gain));
+    if(vol < 0.01) return;
+    const s = Math.max(0, Math.min(1, strength || 0));
+    (BOING_SYNTHS[sePreset] || boingAhun)(s, pitchBias || 0, vol);
+  },
+  // 液体タップ「ぱしゃ」: バンドパスノイズ + 水滴ピン
+  splash(){
+    if(!seOn || !actx) return;
+    const t0 = actx.currentTime;
+    const src = noiseSource(false);
+    const bp = actx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1200; bp.Q.value = 1.2;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.15, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.08);
+    src.connect(bp).connect(g).connect(master);
+    src.start(t0); src.stop(t0 + 0.1);
+    const pins = 2 + (Math.random() * 2 | 0);
+    for(let i = 0; i < pins; i++){
+      const dt = 0.01 + Math.random() * 0.06, f = 2000 + Math.random() * 2000;
+      const o = actx.createOscillator(); o.type = "sine"; o.frequency.value = f;
+      const pg = actx.createGain();
+      pg.gain.setValueAtTime(0.0001, t0 + dt);
+      pg.gain.exponentialRampToValueAtTime(0.08, t0 + dt + 0.004);
+      pg.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.04);
+      o.connect(pg).connect(master);
+      o.start(t0 + dt); o.stop(t0 + dt + 0.05);
+    }
+  },
+  // 注ぎループ「とろとろ」: 常設ボイスをゲインで開閉（attack80ms / release200ms）
+  pourGate(on){
+    if(!actx || !pourGainNode) return;
+    if(on && !seOn) return;
+    const t0 = actx.currentTime;
+    pourGainNode.gain.cancelScheduledValues(t0);
+    pourGainNode.gain.setTargetAtTime(on ? 0.10 : 0.0001, t0, on ? 0.027 : 0.067);
+  },
+  // シェイクボイス「ぷるぷる声」: excite(0〜1)にゲイン・ビブラート速度を追従。ピークでアクセント
+  excite(v){
+    if(!actx) return;
+    v = Math.max(0, Math.min(1, v || 0));
+    if(shakeGainNode){
+      const target = seOn ? Math.min(0.2, v * 0.25) : 0;
+      const t0 = actx.currentTime;
+      const rising = target > shakeLastTarget;
+      shakeGainNode.gain.setTargetAtTime(target, t0, rising ? 0.013 : 0.1);   // attack40ms/release300ms
+      shakeVibLFO.frequency.setTargetAtTime(4 + 6 * v, t0, 0.05);
+      shakeLastTarget = target;
+    }
+    if(seOn && v > 0.55 && shakePrevExcite <= 0.55){       // しきい値上抜けで1発
+      const now = performance.now();
+      if(now - shakeAccentT > 200){ shakeAccentT = now; accentBoing(); }   // クールダウン200ms
+    }
+    shakePrevExcite = v;
+  },
+};
+
+// 最初の pointerdown で AudioContext を起こす（自動再生制限対策。capture段で canvas ハンドラより先に）
+document.addEventListener("pointerdown", () => ensureAudio(), true);
+// visibilitychange 復帰時に resume（iOSサスペンド対策）
+document.addEventListener("visibilitychange", () => { if(!document.hidden && actx && actx.state === "suspended") actx.resume().catch(() => {}); });
+
+// 設定UI
+const bSE = document.getElementById("bSE");
+setToggle(bSE, "misc.se", seOn);
+bSE.onclick = () => {
+  seOn = !seOn;
+  try{ localStorage.setItem("purin.seOn", seOn ? "1" : "0"); }catch(_){ }
+  setToggle(bSE, "misc.se", seOn);
+  if(seOn) ensureAudio();
+  applySeGain();
+};
+const seVolEl = document.getElementById("seVol");
+seVolEl.value = seVolume;   // 後段の enhanceSliders() がこの値で数値ボックスを初期化する
+seVolEl.addEventListener("input", () => {
+  seVolume = Math.max(0, Math.min(1, parseFloat(seVolEl.value) || 0));
+  try{ localStorage.setItem("purin.seVol", String(seVolume)); }catch(_){ }
+  applySeGain();
+});
+// ゆれSEプリセット選択。変更で保存＆プレビュー再生。
+const sePresetEl = document.getElementById("sePreset");
+if(sePresetEl){
+  sePresetEl.value = sePreset;
+  sePresetEl.addEventListener("change", () => {
+    if(BOING_SYNTHS[sePresetEl.value]) sePreset = sePresetEl.value;
+    try{ localStorage.setItem("purin.sePreset", sePreset); }catch(_){ }
+    ensureAudio();
+    se.boing(0.7, 0, 1);   // プレビュー
+  });
+}
+
+// ============ スライダー数値入力（全般） ============
+// 全 .row の range に編集可能な数値ボックスを自動付与。直打ち／↑↓／ホバーホイールで即追従。
+// 表示規則: max-min<=1 は 0〜100 パーセント表示（内部×100・整数）、それ以外は生値（小数桁は
+// step から自動判定）。data-disp="pct"|"raw" で個別に上書き可。
+const sliderNums = {};
+let sliderSyncing = false;   // 数値→スライダー反映中は「スライダー→数値」を止めて入力中の値を壊さない
+function sliderDispCfg(el){
+  const min = parseFloat(el.min), max = parseFloat(el.max), step = parseFloat(el.step) || 0.01;
+  const forced = el.dataset.disp;
+  const pct = forced ? (forced === "pct") : (max - min <= 1);
+  if(pct){
+    return { min: Math.round(min*100), max: Math.round(max*100), step: 1,
+             toDisp: v => String(Math.round(parseFloat(v)*100)),
+             toRaw:  d => parseFloat(d)/100 };
+  }
+  const dec = (String(el.step).split(".")[1] || "").length;
+  return { min, max, step,
+           toDisp: v => dec > 0 ? parseFloat(v).toFixed(dec) : String(Math.round(parseFloat(v))),
+           toRaw:  d => parseFloat(d) };
+}
+function commitNum(rec, d){
+  const {range, cfg, num} = rec;
+  if(isNaN(d)){ num.value = cfg.toDisp(range.value); return; }   // 空/不正入力は現在値へ戻す
+  d = Math.max(cfg.min, Math.min(cfg.max, d));                   // min/max にクランプ
+  sliderSyncing = true;
+  range.value = cfg.toRaw(d);
+  range.dispatchEvent(new Event("input", {bubbles:true}));       // 既存リスナー（物理反映）を発火
+  sliderSyncing = false;
+  num.value = cfg.toDisp(range.value);
+}
+function enhanceSliders(){
+  document.querySelectorAll(".row input[type=range]").forEach(range => {
+    if(range.dataset.enhanced) return;
+    range.dataset.enhanced = "1";
+    const cfg = sliderDispCfg(range);
+    const num = document.createElement("input");
+    num.type = "number"; num.className = "valbox"; num.inputMode = "decimal";
+    num.min = cfg.min; num.max = cfg.max; num.step = cfg.step;
+    num.value = cfg.toDisp(range.value);
+    range.insertAdjacentElement("afterend", num);
+    const rec = {range, num, cfg};
+    sliderNums[range.id] = rec;
+    // 数値ボックス → スライダー（入力途中は確定表示を上書きしない）
+    num.addEventListener("input", () => {
+      const d = parseFloat(num.value);
+      if(isNaN(d)) return;
+      sliderSyncing = true;
+      range.value = cfg.toRaw(Math.max(cfg.min, Math.min(cfg.max, d)));
+      range.dispatchEvent(new Event("input", {bubbles:true}));
+      sliderSyncing = false;
+    });
+    num.addEventListener("change", () => commitNum(rec, parseFloat(num.value)));   // 確定でクランプ整形
+    // スライダー → 数値ボックス
+    range.addEventListener("input", () => { if(!sliderSyncing) num.value = cfg.toDisp(range.value); });
+    // ホバー中のホイールで1ステップ増減（Shiftで10ステップ）
+    num.addEventListener("wheel", e => {
+      e.preventDefault();
+      const step = (e.shiftKey ? 10 : 1) * cfg.step;
+      let d = parseFloat(num.value); if(isNaN(d)) d = cfg.min;
+      commitNum(rec, d + (e.deltaY < 0 ? step : -step));
+    }, {passive:false});
+  });
+}
+// プリセット適用・インポート復元など JS から range.value を書き換える経路の末尾で呼ぶ
+function refreshSliderNums(){
+  for(const id in sliderNums){ const r = sliderNums[id]; r.num.value = r.cfg.toDisp(r.range.value); }
+}
+enhanceSliders();
+
+// ============ 言語切替 ============
+// 言語ごとの UI フォント。各言語の標準的な滑らかなシステムフォントを使う
+// （中文は日本語字形が混ざらないよう各地域フォントを優先。ハングルは韓国語フォント）。
+const JP_FONT = '"MS UI Gothic","Hiragino Kaku Gothic ProN",Meiryo,sans-serif';
+const LANG_FONT = {
+  "ja": JP_FONT,
+  "en": JP_FONT,
+  "zh-Hant": '"PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif',
+  "zh-Hans": '"PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif',
+  "ko": '"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif',
+};
+// 静的HTMLは data-i18n 系属性、動的文字列は t() 経由。ここで両方を現在言語で作り直す。
+function applyLang(lang, persist = true){
+  if(!I18N[lang]) lang = "ja";
+  LANG = lang;
+  // URL(?lang=) 由来の一時表示は保存しない。プルダウン操作など明示切替のみ保存する。
+  if(persist){ try{ localStorage.setItem("purin.lang", lang); }catch(_){ } }
+  document.documentElement.lang = lang;
+  document.documentElement.style.setProperty("--uiFont", LANG_FONT[lang] || LANG_FONT.ja);
+  const sel = document.getElementById("langSel");
+  if(sel && sel.value !== lang) sel.value = lang;   // プログラム経由で呼ばれてもプルダウンを一致させる
+  document.title = "ぷりんあらも〜ど - " + t("app.subtitle");   // ブランド名は翻訳しない
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-html]").forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });
+  document.querySelectorAll("[data-i18n-title]").forEach(el => { el.title = t(el.dataset.i18nTitle); });
+  renderPresetOptions();
+  renderLayerUI();                 // レイヤーチップ（やわNN）の作り直し
+  // トグルは現在のオン/オフ状態を保ったままラベルだけ作り直す
+  setToggle(document.getElementById("bAuto"), "play.autoJiggle", autoOn);
+  setToggle(document.getElementById("bMask"), "setup.showArea", showMask);
+  setToggle(document.getElementById("bAIAdd"), "setup.aiAdd", aiAddMode);
+  setToggle(document.getElementById("bAccel"), "play.accel", useAccel);
+  setToggle(document.getElementById("bTilt"), "liq.tilt", useTilt);
+  setToggle(document.getElementById("bHaptic"), "misc.haptic", hapticOn);
+  setToggle(document.getElementById("bSE"), "misc.se", seOn);
+  setToggle(document.getElementById("bCrop"), "rec.crop", cropRec);
+  setToggle(document.getElementById("bWM"), "rec.wm", watermark);
+  updateRecButtons();
+  updateHint();
+  // トグル幅は「表示時の字幅」で固定しているので、言語が変わったら測り直す
+  document.querySelectorAll("button.tgl").forEach(b => {
+    delete b.dataset.locked; b.style.minWidth = ""; b.style.width = "";
+  });
+  lockToggleWidths();
+  syncCenterHeight();
+}
+const langSel = document.getElementById("langSel");
+langSel.value = LANG;
+langSel.addEventListener("change", () => applyLang(langSel.value));
+
+// ============ 起動 ============
+const geo = makePudding();
+srcCanvas = geo.canvas;
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, geo.canvas);
+buildMesh(geo.canvas.width, geo.canvas.height);
+puddingLayers(geo);
+setMode("play");
+// 起動時: LANG が URL(?lang=) 由来なら localStorage に保存しない（共有リンクが恒久設定を上書きしないため）
+let _urlLang = null;
+try{ _urlLang = new URLSearchParams(location.search).get("lang"); }catch(_){ }
+applyLang(LANG, !(_urlLang && I18N[_urlLang]));
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
